@@ -1,16 +1,24 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.database import engine, Base
 from app.modules.production.router import router as production_router
-from app.database import init_db
+from app.modules.production import model
 
-app = FastAPI(
-    title="MES-ERP Backend",
-    version="1.0.0"
+app = FastAPI(title="MES-ERP", version="1.0")
+
+Base.metadata.create_all(bind=engine)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Inclure le router production
+# IMPORTANT : pas de prefix ici
 app.include_router(production_router)
 
-# Créer les tables automatiquement au démarrage
-@app.on_event("startup")
-def on_startup():
-    init_db()
+@app.get("/")
+def home():
+    return {"message": "MES-ERP API running"}

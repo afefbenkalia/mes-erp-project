@@ -1,17 +1,69 @@
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import date
 
+# =========================
+# PRODUCTION
+# =========================
 class ProductionBase(BaseModel):
-    id_ordre: int
-    quantite_produite: int
-    quantite_rebut: int
+    machine: str
+    of: str
+    fibre: str
+    quantite: float
+    operateur: str
+    debut: str
+    fin: str
+
 
 class ProductionCreate(ProductionBase):
     pass
 
-class Production(ProductionBase):
-    id_production: int
-    date_enregistrement: datetime
+
+class ProductionResponse(ProductionBase):
+    id: int
+    date: date
 
     class Config:
-        from_attributes = True  # v2 de Pydantic (remplace orm_mode)
+        from_attributes = True
+
+
+# =========================
+# REBUT
+# =========================
+class RebutBase(BaseModel):
+    machine: str
+    of: str
+    defaut: str
+    quantite: float
+
+
+class RebutCreate(RebutBase):
+    pass
+
+
+class RebutResponse(RebutBase):
+    id: int
+    date: date
+
+    class Config:
+        from_attributes = True
+
+
+# =========================
+# TEMPS MACHINE
+# =========================
+class TempsBase(BaseModel):
+    machine: str
+    fonctionnement: float
+    arret: float
+
+
+class TempsCreate(TempsBase):
+    pass
+
+
+class TempsResponse(TempsBase):
+    id: int
+    date: date
+
+    class Config:
+        from_attributes = True
