@@ -1,20 +1,30 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
+
 from app.database import get_db
-from . import service, schema
+from . import service, schema, model
 
-router = APIRouter(
-    prefix="/productions",
-    tags=["Productions"]
-)
+router = APIRouter(prefix="/productions", tags=["Production"])
 
-@router.post("")
-def create(data: schema.ProductionCreate, db: Session = Depends(get_db)):
+
+# =========================
+# PRODUCTIONS
+# =========================
+
+@router.get("/", response_model=list[schema.ProductionResponse])
+def get_productions(of_id: int | None = None, db: Session = Depends(get_db)):
+
+    if of_id:
+        return db.query(model.Production).filter(
+            model.Production.of_id == of_id
+        ).all()
+
+    return db.query(model.Production).all()
+
+
+@router.post("/", response_model=schema.ProductionResponse)
+def create_production(data: schema.ProductionCreate, db: Session = Depends(get_db)):
     return service.create_production(db, data)
-
-@router.get("")
-def get_all(db: Session = Depends(get_db)):
-    return service.get_all_productions(db)
 
 
 # =========================

@@ -4,14 +4,14 @@ import {
   LayoutDashboard,
   Cpu,
   Calendar,
-  ChevronRight,
   Package,
   Wrench,
   BarChart3
 } from "lucide-react";
 
-// ✅ Import Production
+// ✅ Import des composants
 import Production from "../components/dashboard/Production";
+import OrdresFabrication from "../components/dashboard/OrdresFabrication";
 
 const MESDashboard = () => {
   const [activeModule, setActiveModule] = useState("mes");
@@ -163,7 +163,6 @@ const MESDashboard = () => {
           </div>
 
           <nav className="mes-nav">
-
             <div
               className={`mes-nav-item ${activeModule === "erp" ? "active" : ""}`}
               onClick={handleERPClick}
@@ -224,42 +223,36 @@ const MESDashboard = () => {
             >
               Tableau de bord
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "machines" ? "active" : ""}`}
               onClick={() => setActiveTab("machines")}
             >
               Machines
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "ordres" ? "active" : ""}`}
               onClick={() => setActiveTab("ordres")}
             >
               Ordres de fabrication
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "suivi" ? "active" : ""}`}
               onClick={() => setActiveTab("suivi")}
             >
               Suivi production
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "arrets" ? "active" : ""}`}
               onClick={() => setActiveTab("arrets")}
             >
               Arrêts & Pannes
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "performance" ? "active" : ""}`}
               onClick={() => setActiveTab("performance")}
             >
               Performance (TRS)
             </span>
-
             <span
               className={`mes-dashboard-nav-item ${activeTab === "tracabilites" ? "active" : ""}`}
               onClick={() => setActiveTab("tracabilites")}
@@ -270,15 +263,15 @@ const MESDashboard = () => {
 
           {/* CONTENT */}
           <div className="mes-content">
-
-            {activeTab === "suivi" ? (
+            {activeTab === "ordres" ? (
+              <OrdresFabrication />
+            ) : activeTab === "suivi" ? (
               <Production />
             ) : (
               <div className="mes-card">
                 <h2 style={{marginBottom:"16px", color:"#1e293b"}}>
                   {activeTab === "tableau-de-bord" && "Tableau de bord MES"}
                   {activeTab === "machines" && "Gestion des Machines"}
-                  {activeTab === "ordres" && "Ordres de Fabrication"}
                   {activeTab === "arrets" && "Arrêts & Pannes"}
                   {activeTab === "performance" && "Performance TRS"}
                   {activeTab === "tracabilites" && "Traçabilités"}
@@ -286,9 +279,7 @@ const MESDashboard = () => {
                 <p>Contenu à personnaliser</p>
               </div>
             )}
-
           </div>
-
         </div>
       </div>
     </>
