@@ -15,5 +15,6 @@ class OF(Base):
     quantite = Column(Integer, nullable=False)
     date_debut = Column(Date)
     date_fin = Column(Date)
+    source = Column(String, default="ERP")  # 🔹 ERP ou MES
 
     productions = relationship("Production", back_populates="of")

@@ -5,8 +5,7 @@ from app.database import Base, engine
 # 🔹 Import des routers
 from app.modules.production.router import router as production_router
 from app.modules.orders.router import router as orders_router
-
-
+from app.modules.traceability.router import router as traceability_router
 # -----------------
 # Création de l'application
 # -----------------
@@ -44,6 +43,7 @@ Base.metadata.create_all(bind=engine)
 # -----------------
 app.include_router(orders_router)
 app.include_router(production_router)
+app.include_router(traceability_router)
 
 # -----------------
 # Endpoint test

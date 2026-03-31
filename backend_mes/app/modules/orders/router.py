@@ -15,14 +15,19 @@ def get_db():
     finally:
         db.close()
 
-
+# 🔹 GET tous les OF
 @router.get("/")
 def get_ofs(db: Session = Depends(get_db)):
     return db.query(OF).all()
 
-
+# 🔹 CREATE OF
 @router.post("/")
 def create_of(data: dict, db: Session = Depends(get_db)):
+     # vérifier si OF existe
+    existing = db.query(OF).filter(OF.numero == data["numero"]).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="OF déjà existant")
+
     new_of = OF(**data)
     db.add(new_of)
     db.commit()
