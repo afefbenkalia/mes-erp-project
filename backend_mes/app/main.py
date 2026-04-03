@@ -1,19 +1,24 @@
 from fastapi import FastAPI
-from app.core.database import Base, engine
+from fastapi.middleware.cors import CORSMiddleware
+from app.database import engine, Base
+from app.modules.production.router import router as production_router
+from app.modules.production import model
 
-from app.modules.machines.router import router as machines_router
-from app.modules.machines import model 
+app = FastAPI(title="MES-ERP", version="1.0")
 
-app = FastAPI()
+Base.metadata.create_all(bind=engine)
 
-app.include_router(machines_router)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-
+# IMPORTANT : pas de prefix ici
+app.include_router(production_router)
 
 @app.get("/")
-def read_root():
-    return {"message": "MES API running"}
+def home():
+    return {"message": "MES-ERP API running"}
