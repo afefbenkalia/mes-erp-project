@@ -16,5 +16,7 @@ class OF(Base):
     date_debut = Column(Date)
     date_fin = Column(Date)
     source = Column(String, default="ERP")  # 🔹 ERP ou MES
+    statut = Column(String, default="Planifié")
+   
 
     productions = relationship("Production", back_populates="of")

@@ -1,29 +1,46 @@
 from pydantic import BaseModel
-from typing import List
+from typing import Optional, List, Dict
 
-class Step(BaseModel):
+
+class StepBase(BaseModel):
     operation: str
-    machine: str
-    operateur: str
+    machine: Optional[str] = None
+    operateur: Optional[str] = None
     status: str
-    duree_min: int
-    quantite: int
-    parametres: dict
-    qualite: dict
+    duree_min: Optional[int] = None
+    quantite: Optional[int] = None
+    parametres: Optional[Dict] = None
+    qualite: Optional[Dict] = None
+
+
+class StepCreate(StepBase):
+    pass
+
+
+class StepOut(StepBase):
+    id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
-class Lot(BaseModel):
+class LotBase(BaseModel):
     numero_lot: str
     produit: str
-    ordre_id: str
+    ordre_id: Optional[str] = None
     date_creation: str
     quantite_initiale: int
     quantite_finale: int
     status: str
-    steps: List[Step] = []
+
+
+class LotCreate(LotBase):
+    pass
+
+
+class LotOut(LotBase):
+    id: int
+    steps: List[StepOut] = []
 
     class Config:
-        orm_mode = True
+        from_attributes = True

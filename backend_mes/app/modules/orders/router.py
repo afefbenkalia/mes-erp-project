@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from .model import OF
+from datetime import date
 
 router = APIRouter(
     prefix="/ordres-fabrication",
@@ -33,3 +34,12 @@ def create_of(data: dict, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_of)
     return new_of
+
+# 🔥 FONCTION AUTO CLÔTURE
+def auto_close_of(of, db: Session):
+    total_produit = sum(p.quantite for p in of.productions)
+
+    if total_produit >= of.quantite and of.statut != "Terminé":
+        of.statut = "Terminé"
+        of.date_fin_reelle = date.today()
+        db.commit()

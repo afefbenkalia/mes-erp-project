@@ -2,6 +2,7 @@ import os
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 
+
 def generate_pdf(lot, kpi):
     os.makedirs("reports", exist_ok=True)
 
@@ -25,8 +26,17 @@ def generate_pdf(lot, kpi):
     elements.append(Spacer(1, 10))
     elements.append(Paragraph("Étapes", styles['Heading2']))
 
-    for s in lot.steps:
-        elements.append(Paragraph(f"{s.operation} - {s.machine} - {s.status}", styles['Normal']))
+    # 🔥 IMPORTANT SAFE CHECK
+    if lot.steps:
+        for s in lot.steps:
+            elements.append(
+                Paragraph(
+                    f"{s.operation} - {s.machine or 'N/A'} - {s.status}",
+                    styles['Normal']
+                )
+            )
+    else:
+        elements.append(Paragraph("Aucune étape trouvée", styles['Normal']))
 
     doc.build(elements)
 
