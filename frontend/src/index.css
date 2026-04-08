@@ -8,4 +8,29 @@
   box-sizing: border-box;
   font-family: 'Segoe UI', sans-serif;
 }
+.input {
+  @apply w-full mb-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-white outline-none;
+}
 
+.card {
+  background: #1e293b;
+  padding: 15px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+
+.input-dark {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  background: #0f172a;
+  border: 1px solid rgba(255,255,255,0.1);
+  color: white;
+}
+
+.btn-primary {
+  background: #2563eb;
+  padding: 8px;
+  border-radius: 8px;
+}
