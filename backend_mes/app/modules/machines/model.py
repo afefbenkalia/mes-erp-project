@@ -1,7 +1,8 @@
 """Modèles ORM pour la gestion des machines et de l'historique des états."""
 
-from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+
+from app.core.datetime_utc import utc_now_naive
 from sqlalchemy.orm import relationship
 
 try:
@@ -28,8 +29,8 @@ class Machine(Base):
     machine_type = Column(String(80), nullable=False)
     description = Column(String(500))
     location = Column(String(120))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
     # Relation: historique des états
     state_history = relationship(
@@ -56,7 +57,7 @@ class MachineStateHistory(Base):
     ended_at = Column(DateTime, nullable=True)  # None = état en cours
     comment = Column(String(500))
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=utc_now_naive)
 
     # Relation
     machine = relationship("Machine", back_populates="state_history")

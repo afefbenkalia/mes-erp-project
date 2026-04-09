@@ -5,6 +5,8 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
+from app.core.datetime_utc import utc_now_naive
+
 from .model import Machine, MachineStateHistory
 from .schema import MachineCreate, MachineUpdate, StateHistoryCreate, StateHistoryUpdate
 
@@ -105,7 +107,7 @@ def add_state_history(
     data: StateHistoryCreate,
 ) -> MachineStateHistory:
     """Ajoute une entrée à l'historique des états."""
-    started = data.started_at or datetime.utcnow()
+    started = data.started_at or utc_now_naive()
     entry = MachineStateHistory(
         machine_id=machine_id,
         state=data.state,
@@ -128,7 +130,7 @@ def close_current_state(
     current = get_current_state(db, machine_id)
     if not current:
         return None
-    current.ended_at = ended_at or datetime.utcnow()
+    current.ended_at = ended_at or utc_now_naive()
     db.commit()
     db.refresh(current)
     return current
@@ -162,7 +164,7 @@ def change_state(
     1. Clôture l'état actuel (ended_at = now)
     2. Crée une nouvelle entrée avec le nouvel état
     """
-    now = datetime.utcnow()
+    now = utc_now_naive()
     close_current_state(db, machine_id, ended_at=now)
     return add_state_history(
         db,

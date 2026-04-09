@@ -1,10 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
-from app.core.ensure_schema import ensure_users_hashed_password_column
+from app.core.ensure_schema import (
+    ensure_productions_of_id_column,
+    ensure_users_hashed_password_column,
+)
 
 # Import des routers
 from app.modules.production.router import router as production_router
+from app.modules.dashboard.router import router as dashboard_router
 from app.modules.orders.router import router as orders_router
 from app.modules.traceability.router import router as traceability_router
 from app.modules.machines.router import router as machine_router
@@ -37,11 +41,13 @@ app.add_middleware(
 # Création des tables
 Base.metadata.create_all(bind=engine)
 ensure_users_hashed_password_column()
+ensure_productions_of_id_column()
 
 # Routers - IMPORTANT: Le préfixe est "/auth" une seule fois
 app.include_router(auth_router, prefix="/auth")
 app.include_router(orders_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
+app.include_router(dashboard_router, prefix="/api")
 app.include_router(traceability_router, prefix="/api")
 app.include_router(machine_router, prefix="/api")
 @app.get("/")

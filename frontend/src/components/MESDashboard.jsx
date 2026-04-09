@@ -15,6 +15,7 @@ import OrdresFabrication from "./dashboard/OrdresFabrication";
 import Traceability from "./dashboard/Traceability";
 import UserManagement from "./UserManagement";
 import Machine from "./dashboard/Machine";
+import ProductionDashboard from "./dashboard/DashboardMes/ProductionDashboard";
 
 const MESDashboard = () => {
   const [user, setUser] = useState(null);
@@ -103,7 +104,7 @@ const MESDashboard = () => {
 
     switch (activeModule) {
       case "dashboard":
-        return <h2>📊 MES Dashboard</h2>;
+        return <ProductionDashboard />;
       case "production":
         return <Production />;
       case "ordres":
