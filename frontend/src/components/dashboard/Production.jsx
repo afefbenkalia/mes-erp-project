@@ -1,15 +1,13 @@
-//Production.jsx
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-const BASE_URL = "http://127.0.0.1:8000/productions";
+const BASE_URL = "http://127.0.0.1:8000/api/productions";
 
 const Production = () => {
   const [activeTab, setActiveTab] = useState("production");
 
   const [productions, setProductions] = useState([]);
   const [rebuts, setRebuts] = useState([]);
-  const [tempsMachine, setTempsMachine] = useState([]);
 
   // États pour les formulaires
   const [formProd, setFormProd] = useState({
@@ -29,12 +27,6 @@ const Production = () => {
     quantite: ""
   });
 
-  const [formTemps, setFormTemps] = useState({
-    machine: "",
-    fonctionnement: "",
-    arret: ""
-  });
-
   // États pour les erreurs et soumission
   const [formErrors, setFormErrors] = useState({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -49,11 +41,11 @@ const Production = () => {
   const typesFibre = ["Coton","Laine","Polyester","Acrylique","Lin","Soie"];
   const typesDefaut = ["Néppes","Impuretés","Casses","Irrégularité","Souillure","Autre défaut"];
   const ofs = [
-    {id:1,name:"OF-2024-001"},
-    {id:2,name:"OF-2024-002"},
-    {id:3,name:"OF-2024-003"},
-    {id:4,name:"OF-2024-004"},
-    {id:5,name:"OF-2024-005"}
+    {id:1,name:"OF-2026-001"},
+    {id:2,name:"OF-2026-002"},
+    {id:3,name:"OF-2026-003"},
+    {id:4,name:"OF-2026-004"},
+    {id:5,name:"OF-2026-005"}
   ];
 
   // =========================
@@ -63,10 +55,6 @@ const Production = () => {
   const totalProd = productions.reduce((acc,p)=> acc + Number(p.quantite || 0),0);
   const totalRebut = rebuts.reduce((acc,r)=> acc + Number(r.quantite || 0),0);
   const tauxQualite = totalProd ? (((totalProd-totalRebut)/totalProd)*100).toFixed(1) : 0;
-  const totalTempsFonctionnement = tempsMachine.reduce((acc,t)=> acc + Number(t.fonctionnement || 0),0);
-  const totalTempsArret = tempsMachine.reduce((acc,t)=> acc + Number(t.arret || 0),0);
-  const tauxDisponibilite = totalTempsFonctionnement + totalTempsArret ? 
-    ((totalTempsFonctionnement / (totalTempsFonctionnement + totalTempsArret)) * 100).toFixed(1) : 0;
 
   // =========================
   // LOAD DATA
@@ -80,9 +68,6 @@ const Production = () => {
 
         const reb = await axios.get(`${BASE_URL}/rebuts`);
         setRebuts(reb.data);
-
-        const temps = await axios.get(`${BASE_URL}/temps`);
-        setTempsMachine(temps.data);
 
       }catch(err){
         console.error(err);
@@ -151,17 +136,6 @@ const Production = () => {
     return Object.keys(errors).length === 0;
   };
 
-  const validateTemps = () => {
-    const errors = {};
-    
-    if (!formTemps.machine) errors.machine = "Veuillez sélectionner une machine";
-    if (!formTemps.fonctionnement || formTemps.fonctionnement < 0) errors.fonctionnement = "Le temps de fonctionnement doit être ≥ 0";
-    if (!formTemps.arret || formTemps.arret < 0) errors.arret = "Le temps d'arrêt doit être ≥ 0";
-    
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  };
-
   // =========================
   // HANDLERS
   // =========================
@@ -218,32 +192,6 @@ const Production = () => {
     }
   };
 
-  const handleTemps = async (e)=>{
-    e.preventDefault();
-    
-    if (!validateTemps()) {
-      const firstError = document.querySelector(".error-field");
-      if (firstError) firstError.scrollIntoView({ behavior: "smooth", block: "center" });
-      return;
-    }
-    
-    setIsSubmitting(true);
-    setSuccessMessage("");
-    
-    try{
-      const res = await axios.post(`${BASE_URL}/temps`, formTemps);
-      setTempsMachine([...tempsMachine,res.data]);
-      setFormTemps({machine:"",fonctionnement:"",arret:""});
-      setSuccessMessage("✅ Temps machine enregistré avec succès !");
-      setTimeout(() => setSuccessMessage(""), 3000);
-    }catch(err){
-      alert("❌ Erreur lors de l'enregistrement du temps machine");
-      console.error(err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   // =========================
   // STYLES AMÉLIORÉS
   // =========================
@@ -255,7 +203,7 @@ const Production = () => {
     logoIcon:{fontSize:"2.5rem"},
     title:{margin:0,color:"#0f172a",fontSize:"1.8rem",fontWeight:"600"},
     subtitle:{margin:0,color:"#64748b",fontSize:"0.9rem"},
-    kpiGrid:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"1.5rem",marginBottom:"2rem"},
+    kpiGrid:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"1.5rem",marginBottom:"2rem"},
     kpiCard:{background:"#fff",padding:"1.5rem",borderRadius:"12px",boxShadow:"0 4px 6px -1px rgba(0,0,0,0.1)",display:"flex",alignItems:"center",gap:"1rem",borderLeft:"4px solid"},
     kpiIcon:{fontSize:"2rem",background:"#f1f5f9",padding:"0.75rem",borderRadius:"12px"},
     kpiLabel:{margin:"0 0 0.25rem 0",color:"#64748b",fontSize:"0.9rem",fontWeight:"500"},
@@ -299,7 +247,7 @@ const Production = () => {
         </div>
       </div>
 
-      {/* KPI - 4 indicateurs */}
+      {/* KPI - 3 indicateurs */}
       <div style={styles.kpiGrid}>
         <div style={{...styles.kpiCard, borderLeftColor: "#2563eb"}}>
           <div style={styles.kpiIcon}>📦</div>
@@ -320,13 +268,6 @@ const Production = () => {
           <div>
             <p style={styles.kpiLabel}>Taux Qualité</p>
             <p style={styles.kpiValue}>{tauxQualite}%</p>
-          </div>
-        </div>
-        <div style={{...styles.kpiCard, borderLeftColor: "#f59e0b"}}>
-          <div style={styles.kpiIcon}>⏱️</div>
-          <div>
-            <p style={styles.kpiLabel}>Disponibilité</p>
-            <p style={styles.kpiValue}>{tauxDisponibilite}%</p>
           </div>
         </div>
       </div>
@@ -358,17 +299,6 @@ const Production = () => {
         <button 
           style={{
             ...styles.tabButton,
-            background: activeTab === "temps" ? "#1e293b" : "#fff",
-            color: activeTab === "temps" ? "#fff" : "#64748b",
-            border: activeTab === "temps" ? 'none' : '1px solid #e2e8f0'
-          }}
-          onClick={()=>{setActiveTab("temps"); setSuccessMessage(""); setFormErrors({});}}
-        >
-          <span>⏱️</span> Temps
-        </button>
-        <button 
-          style={{
-            ...styles.tabButton,
             background: activeTab === "historique" ? "#1e293b" : "#fff",
             color: activeTab === "historique" ? "#fff" : "#64748b",
             border: activeTab === "historique" ? 'none' : '1px solid #e2e8f0'
@@ -381,7 +311,7 @@ const Production = () => {
 
       <div style={styles.content}>
 
-        {/* FORM PRODUCTION AMÉLIORÉ */}
+        {/* FORM PRODUCTION */}
         {activeTab === "production" && (
           <div style={{animation: "fadeIn 0.3s ease"}}>
             <h2 style={styles.formTitle}>📝 Saisie Production</h2>
@@ -401,12 +331,29 @@ const Production = () => {
 
                 {/* OF */}
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>📋 Ordre de Fabrication <span style={styles.requiredStar}>*</span></label>
-                  <select style={{...styles.select, ...(formErrors.of_id ? styles.inputError : {})}} value={formProd.of_id} onChange={(e)=>setFormProd({...formProd,of_id:e.target.value})} required className={formErrors.of_id ? "error-field" : ""}>
-                    <option value="">Sélectionner un OF</option>
-                    {ofs.map(o=><option key={o.id} value={o.id}>{o.name}</option>)}
-                  </select>
-                  {formErrors.of_id && <div style={styles.errorMessage}>⚠️ {formErrors.of_id}</div>}
+                  <label style={styles.label}>
+                    📋 N° Ordre de Fabrication <span style={styles.requiredStar}>*</span>
+                  </label>
+                  <input
+                    list="ofs"
+                    placeholder="Ex: OF-2026-001"
+                    value={formProd.of_id}
+                    onChange={(e)=>setFormProd({...formProd, of_id: e.target.value})}
+                    style={{...styles.input, ...(formErrors.of_id ? styles.inputError : {})}}
+                    className={formErrors.of_id ? "error-field" : ""}
+                    required
+                  />
+                  <datalist id="ofs">
+                    {ofs.map(o => (
+                      <option key={o.id} value={o.name} />
+                    ))}
+                  </datalist>
+                  {formErrors.of_id && (
+                    <div style={styles.errorMessage}>⚠️ {formErrors.of_id}</div>
+                  )}
+                  <div style={styles.infoTooltip}>
+                    Vous pouvez sélectionner ou saisir manuellement le N° OF
+                  </div>
                 </div>
 
                 {/* Fibre */}
@@ -470,7 +417,7 @@ const Production = () => {
           </div>
         )}
 
-        {/* FORM REBUT AMÉLIORÉ */}
+        {/* FORM REBUT */}
         {activeTab === "rebuts" && (
           <div style={{animation: "fadeIn 0.3s ease"}}>
             <h2 style={styles.formTitle}>⚠️ Saisie Rebuts</h2>
@@ -531,57 +478,7 @@ const Production = () => {
           </div>
         )}
 
-        {/* FORM TEMPS MACHINE AMÉLIORÉ */}
-        {activeTab === "temps" && (
-          <div style={{animation: "fadeIn 0.3s ease"}}>
-            <h2 style={styles.formTitle}>⏱️ Saisie Temps Machine</h2>
-            <p style={styles.formSubtitle}>Enregistrez les temps de fonctionnement et d'arrêt</p>
-            
-            <form onSubmit={handleTemps}>
-              <div style={styles.formGrid}>
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>🏭 Machine <span style={styles.requiredStar}>*</span></label>
-                  <select style={{...styles.select, ...(formErrors.machine ? styles.inputError : {})}} value={formTemps.machine} onChange={(e)=>setFormTemps({...formTemps,machine:e.target.value})} required className={formErrors.machine ? "error-field" : ""}>
-                    <option value="">Sélectionner une machine</option>
-                    {machines.map(m=><option key={m} value={m}>{m}</option>)}
-                  </select>
-                  {formErrors.machine && <div style={styles.errorMessage}>⚠️ {formErrors.machine}</div>}
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>▶️ Fonctionnement (min) <span style={styles.requiredStar}>*</span></label>
-                  <input style={{...styles.input, ...(formErrors.fonctionnement ? styles.inputError : {})}} type="number" placeholder="Ex: 480" value={formTemps.fonctionnement} onChange={(e)=>setFormTemps({...formTemps,fonctionnement:e.target.value})} required className={formErrors.fonctionnement ? "error-field" : ""}/>
-                  {formErrors.fonctionnement && <div style={styles.errorMessage}>⚠️ {formErrors.fonctionnement}</div>}
-                  <div style={styles.infoTooltip}>Temps de fonctionnement en minutes</div>
-                </div>
-
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>⏸️ Arrêt (min) <span style={styles.requiredStar}>*</span></label>
-                  <input style={{...styles.input, ...(formErrors.arret ? styles.inputError : {})}} type="number" placeholder="Ex: 60" value={formTemps.arret} onChange={(e)=>setFormTemps({...formTemps,arret:e.target.value})} required className={formErrors.arret ? "error-field" : ""}/>
-                  {formErrors.arret && <div style={styles.errorMessage}>⚠️ {formErrors.arret}</div>}
-                  <div style={styles.infoTooltip}>Temps d'arrêt en minutes</div>
-                </div>
-              </div>
-              
-              <div style={styles.buttonContainer}>
-                <button type="button" style={styles.secondaryBtn} onClick={()=>{
-                  setFormTemps({machine:"",fonctionnement:"",arret:""});
-                  setFormErrors({});
-                }}>
-                  🗑️ Réinitialiser
-                </button>
-                <button type="submit" style={isSubmitting ? styles.disabledBtn : styles.primaryBtn} disabled={isSubmitting}>
-                  <span style={styles.btnIcon}>{isSubmitting ? "⏳" : "⏱️"}</span>
-                  {isSubmitting ? "Enregistrement..." : "Enregistrer Temps"}
-                </button>
-              </div>
-              
-              {successMessage && <div style={styles.successMessage}>{successMessage}</div>}
-            </form>
-          </div>
-        )}
-
-        {/* HISTORIQUE AMÉLIORÉ */}
+        {/* HISTORIQUE */}
         {activeTab === "historique" && (
           <div style={{animation: "fadeIn 0.3s ease"}}>
             <h2 style={styles.formTitle}>📋 Historique des Productions</h2>
