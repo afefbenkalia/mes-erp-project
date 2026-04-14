@@ -4,9 +4,6 @@ import {
   Cpu,
   ClipboardList,
   Search,
-  Boxes,
-  Wrench,
-  Database,
   LogOut
 } from "lucide-react";
 
@@ -49,7 +46,7 @@ const MESDashboard = () => {
   const isAdmin = role === "admin";
   const isResponsable = role === "responsable" || role === "manager";
 
-  // ✅ Machine ajoutée ici (MES)
+  // ✅ MENU MES فقط
   const mesMenu = [
     {
       id: "dashboard",
@@ -72,28 +69,9 @@ const MESDashboard = () => {
       icon: <Search size={16} />
     },
     {
-      id: "machine", // ✅ ici
+      id: "machine",
       label: "Machine",
       icon: <Cpu size={16} />
-    }
-  ];
-
-  // ❌ Machine supprimée d'ici
-  const erpMenu = [
-    {
-      id: "erp-production",
-      label: "ERP Production",
-      icon: <Boxes size={16} />
-    },
-    {
-      id: "erp-stock",
-      label: "Stock",
-      icon: <Database size={16} />
-    },
-    {
-      id: "erp-maintenance",
-      label: "Maintenance",
-      icon: <Wrench size={16} />
     }
   ];
 
@@ -111,12 +89,6 @@ const MESDashboard = () => {
         return <OrdresFabrication />;
       case "traceability":
         return <Traceability />;
-      case "erp-production":
-        return <h2>📦 ERP Production</h2>;
-      case "erp-stock":
-        return <h2>📊 Stock Module</h2>;
-      case "erp-maintenance":
-        return <h2>🔧 Maintenance ERP</h2>;
       case "users":
         return <UserManagement />;
       default:
@@ -127,24 +99,10 @@ const MESDashboard = () => {
   return (
     <div style={styles.container}>
       <aside style={styles.sidebar}>
-        <h2>🏭 MES-ERP</h2>
+        <h2>🏭 MES</h2>
 
         {isResponsable && (
           <>
-            <p style={styles.sectionTitle}>ERP</p>
-            {erpMenu.map(item => (
-              <div
-                key={item.id}
-                onClick={() => setActiveModule(item.id)}
-                style={{
-                  ...styles.item,
-                  background: activeModule === item.id ? "#1e293b" : "transparent"
-                }}
-              >
-                {item.icon} {item.label}
-              </div>
-            ))}
-
             <p style={styles.sectionTitle}>MES</p>
             {mesMenu.map(item => (
               <div

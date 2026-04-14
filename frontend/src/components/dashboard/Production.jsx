@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
-const BASE_URL = "http://127.0.0.1:8000/productions";
+const BASE_URL = "http://127.0.0.1:8000/api/productions";
 
 const Production = () => {
   const [activeTab, setActiveTab] = useState("production");
