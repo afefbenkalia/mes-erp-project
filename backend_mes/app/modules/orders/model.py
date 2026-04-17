@@ -2,9 +2,6 @@ from sqlalchemy import Column, Integer, String, Date
 from sqlalchemy.orm import relationship
 from app.database import Base
 
-# 🔹 Import Production pour la relation
-from ..production.model import Production
-
 class OF(Base):
     __tablename__ = "ordres_fabrication"
 
@@ -13,10 +10,8 @@ class OF(Base):
     machine = Column(String, nullable=False)
     produit = Column(String, nullable=False)
     quantite = Column(Integer, nullable=False)
-    date_debut = Column(Date)
-    date_fin = Column(Date)
-    source = Column(String, default="ERP")  # 🔹 ERP ou MES
+    date_debut = Column(Date, nullable=True)
+    date_fin = Column(Date, nullable=True)
     statut = Column(String, default="Planifié")
-   
 
     productions = relationship("Production", back_populates="of")

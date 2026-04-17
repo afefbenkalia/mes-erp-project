@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
+from typing import Optional
 
 
 # =================
@@ -10,10 +11,11 @@ class ProductionCreate(BaseModel):
     machine: str
     fibre: str
     quantite: float
-    operateur: str | None = None
-    debut: str | None = None
-    fin: str | None = None
+    operateur: Optional[str] = None
+    debut: Optional[str] = None
+    fin: Optional[str] = None
     of_id: int
+    of_numero: Optional[str] = None
 
 
 class ProductionResponse(ProductionCreate):

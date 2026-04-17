@@ -1,23 +1,33 @@
+
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from . import model
+from app.modules.production.model import Production
+from app.modules.orders.model import OF
+from app.modules.production import model
 
 
-def create_production(db: Session, data):
 
-    prod = model.Production(**data.dict())
+def create_production(db, data):
+    # rechercher l'OF par numero
+    of = db.query(OF).filter(OF.id == data.of_id).first()
+
+    if not of:
+        raise HTTPException(status_code=404, detail="OF introuvable")
+
+    prod = Production(
+        machine=data.machine,
+        fibre=data.fibre,
+        quantite=data.quantite,
+        operateur=data.operateur,
+        debut=data.debut,
+        fin=data.fin,
+        of_id=of.id,
+        of_numero=of.numero
+    )
+
     db.add(prod)
     db.commit()
     db.refresh(prod)
-
-    hist = model.HistoriqueProduction(
-        machine=prod.machine,
-        of_id=prod.of_id,
-        quantite=prod.quantite,
-        evenement="production"
-    )
-
-    db.add(hist)
-    db.commit()
 
     return prod
 

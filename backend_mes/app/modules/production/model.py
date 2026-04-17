@@ -15,9 +15,10 @@ class Production(Base):
     debut = Column(String)
     fin = Column(String)
     date = Column(Date, default=date.today)
-    of_id = Column(Integer, ForeignKey("ordres_fabrication.id"))    # relation OF
-   
-   
+
+    of_id = Column(Integer, ForeignKey("ordres_fabrication.id"))
+    of_numero = Column(String)
+
     of = relationship("OF", back_populates="productions")
 
     # relation rebuts

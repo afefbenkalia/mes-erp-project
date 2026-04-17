@@ -1,35 +1,28 @@
-# app/modules/orders/schema.py
 from pydantic import BaseModel
+from typing import Optional, List
 from datetime import date
-from typing import List
 
+
+# ── Schéma de réception depuis l'ERP ──────────────────────────────────────────
 class OFCreate(BaseModel):
     numero: str
     machine: str
     produit: str
     quantite: int
-    date_debut: date
-    date_fin: date
-    statut: str = "Planifié"
+    date_debut: Optional[date] = None
+    date_fin: Optional[date] = None
 
-class ProductionSchema(BaseModel):
-    id: int
-    quantite: float
-    statut: str
 
-    model_config = {"from_attributes": True}
-
-class OFResponse(BaseModel):
+# ── Schéma de réponse ─────────────────────────────────────────────────────────
+class OFOut(BaseModel):
     id: int
     numero: str
     machine: str
     produit: str
     quantite: int
-    date_debut: date
-    date_fin: date
+    date_debut: Optional[date]
+    date_fin: Optional[date]
     statut: str
 
-    model_config = {"from_attributes": True}
-
-class OFWithProductions(OFResponse):
-    productions: List[ProductionSchema] = []
+    class Config:
+        from_attributes = True

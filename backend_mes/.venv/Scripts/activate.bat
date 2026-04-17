@@ -8,7 +8,7 @@ if defined _OLD_CODEPAGE (
     "%SystemRoot%\System32\chcp.com" 65001 > nul
 )
 
-set VIRTUAL_ENV=C:\projet erp 2\mes-erp-project\backend_mes\.venv
+set VIRTUAL_ENV=C:\Users\wiki\mes-project\backend_mes\.venv
 
 if not defined PROMPT set PROMPT=$P$G
 

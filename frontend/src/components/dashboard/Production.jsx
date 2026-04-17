@@ -1,18 +1,23 @@
+// Production.jsx - Version avec N°OF seulement
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const BASE_URL = "http://127.0.0.1:8000/api/productions";
+const MES_OF_URL = "http://127.0.0.1:8000/api/ordres-fabrication";
 
 const Production = () => {
   const [activeTab, setActiveTab] = useState("production");
 
   const [productions, setProductions] = useState([]);
   const [rebuts, setRebuts] = useState([]);
+  const [ordresFabrication, setOrdresFabrication] = useState([]);
+  const [loadingOFs, setLoadingOFs] = useState(false);
 
   // États pour les formulaires
   const [formProd, setFormProd] = useState({
     machine: "",
     of_id: "",
+    of_numero: "",
     fibre: "",
     quantite: "",
     operateur: "",
@@ -40,13 +45,6 @@ const Production = () => {
   const operateurs = ["Jean Dupont","Marie Martin","Pierre Durand","Sophie Lefebvre","Lucas Bernard"];
   const typesFibre = ["Coton","Laine","Polyester","Acrylique","Lin","Soie"];
   const typesDefaut = ["Néppes","Impuretés","Casses","Irrégularité","Souillure","Autre défaut"];
-  const ofs = [
-    {id:1,name:"OF-2026-001"},
-    {id:2,name:"OF-2026-002"},
-    {id:3,name:"OF-2026-003"},
-    {id:4,name:"OF-2026-004"},
-    {id:5,name:"OF-2026-005"}
-  ];
 
   // =========================
   // KPI
@@ -60,6 +58,23 @@ const Production = () => {
   // LOAD DATA
   // =========================
 
+  const loadOrdresFabrication = async () => {
+    setLoadingOFs(true);
+    try {
+      const response = await axios.get(MES_OF_URL + "/");
+      setOrdresFabrication(response.data);
+    } catch (err) {
+      console.error("Erreur lors du chargement des OFs MES:", err);
+      setOrdresFabrication([
+        { id: 1, numero: "OF-001", machine: "Carde 01", produit: "Ruban cardé coton", quantite: 500 },
+        { id: 2, numero: "OF-002", machine: "Carde 02", produit: "Ruban cardé polyester", quantite: 750 },
+        { id: 3, numero: "OF-003", machine: "Carde 03", produit: "Ruban cardé mélange", quantite: 600 },
+      ]);
+    } finally {
+      setLoadingOFs(false);
+    }
+  };
+
   useEffect(()=>{
     const load = async ()=>{
       try{
@@ -69,13 +84,13 @@ const Production = () => {
         const reb = await axios.get(`${BASE_URL}/rebuts`);
         setRebuts(reb.data);
 
+        await loadOrdresFabrication();
       }catch(err){
         console.error(err);
       }
     };
     load();
     
-    // Ajouter les animations CSS
     const styleSheet = document.createElement("style");
     styleSheet.textContent = `
       @keyframes fadeIn {
@@ -91,25 +106,52 @@ const Production = () => {
         25% { transform: translateX(-5px); }
         75% { transform: translateX(5px); }
       }
+      @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.5; }
+      }
       .error-field {
         animation: shake 0.5s;
       }
       .success-message {
         animation: slideIn 0.3s ease;
       }
+      .loading-pulse {
+        animation: pulse 1.5s ease-in-out infinite;
+      }
     `;
     document.head.appendChild(styleSheet);
   },[]);
 
-  // =========================
-  // VALIDATION DES FORMULAIRES
-  // =========================
+  const handleOFChange = (e) => {
+    const selectedId = parseInt(e.target.value);
+    const selectedOF = ordresFabrication.find(of => of.id === selectedId);
+    
+    if (selectedOF) {
+      setFormProd({
+        ...formProd,
+        of_id: selectedOF.id,
+        of_numero: selectedOF.numero,
+        machine: selectedOF.machine
+      });
+      
+      setSuccessMessage(`✅ OF sélectionné: ${selectedOF.numero}`);
+      setTimeout(() => setSuccessMessage(""), 3000);
+    } else {
+      setFormProd({
+        ...formProd,
+        of_id: "",
+        of_numero: "",
+        machine: ""
+      });
+    }
+  };
 
   const validateProduction = () => {
     const errors = {};
     
     if (!formProd.machine) errors.machine = "Veuillez sélectionner une machine";
-    if (!formProd.of_id) errors.of_id = "Veuillez sélectionner un OF";
+    if (!formProd.of_id) errors.of_id = "Veuillez sélectionner un OF valide";
     if (!formProd.fibre) errors.fibre = "Veuillez sélectionner une fibre";
     if (!formProd.quantite || formProd.quantite <= 0) errors.quantite = "La quantité doit être supérieure à 0";
     if (!formProd.operateur) errors.operateur = "Veuillez sélectionner un opérateur";
@@ -136,10 +178,6 @@ const Production = () => {
     return Object.keys(errors).length === 0;
   };
 
-  // =========================
-  // HANDLERS
-  // =========================
-
   const handleProduction = async (e)=>{
     e.preventDefault();
     
@@ -155,7 +193,16 @@ const Production = () => {
     try{
       const res = await axios.post(BASE_URL,formProd);
       setProductions([...productions,res.data]);
-      setFormProd({machine:"",of_id:"",fibre:"",quantite:"",operateur:"",debut:"",fin:""});
+      setFormProd({
+        machine: "",
+        of_id: "",
+        of_numero: "",
+        fibre: "",
+        quantite: "",
+        operateur: "",
+        debut: "",
+        fin: ""
+      });
       setSuccessMessage("✅ Production enregistrée avec succès !");
       setTimeout(() => setSuccessMessage(""), 3000);
     }catch(err){
@@ -192,10 +239,6 @@ const Production = () => {
     }
   };
 
-  // =========================
-  // STYLES AMÉLIORÉS
-  // =========================
-
   const styles = {
     container:{padding:"2rem",background:"#f8fafc",minHeight:"100vh",fontFamily:"'Inter', -apple-system, BlinkMacSystemFont, sans-serif"},
     header:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"2rem",background:"#fff",padding:"1.5rem 2rem",borderRadius:"16px",boxShadow:"0 4px 6px -1px rgba(0,0,0,0.1)"},
@@ -227,27 +270,28 @@ const Production = () => {
     disabledBtn:{background:"#94a3b8",color:"#fff",padding:"0.75rem 1.5rem",border:"none",borderRadius:"8px",fontSize:"0.95rem",fontWeight:"500",display:"inline-flex",alignItems:"center",justifyContent:"center",gap:"0.5rem",cursor:"not-allowed",opacity:0.7,flex:1},
     btnIcon:{fontSize:"1.1rem"},
     successMessage:{color:"#10b981",fontSize:"0.9rem",marginTop:"0.5rem",padding:"0.75rem",background:"#f0fdf4",borderRadius:"8px",borderLeft:"3px solid #10b981",display:"flex",alignItems:"center",gap:"0.5rem",animation:"slideIn 0.3s ease"},
+    infoMessage:{color:"#3b82f6",fontSize:"0.9rem",marginTop:"0.5rem",padding:"0.75rem",background:"#eff6ff",borderRadius:"8px",borderLeft:"3px solid #3b82f6",display:"flex",alignItems:"center",gap:"0.5rem",animation:"slideIn 0.3s ease"},
     table:{width:"100%",borderCollapse:"collapse",fontSize:"0.95rem"},
     th:{textAlign:"left",padding:"0.75rem",borderBottom:"2px solid #e2e8f0",color:"#64748b",fontWeight:"600"},
     td:{padding:"0.75rem",borderBottom:"1px solid #e2e8f0",color:"#1e293b"},
-    infoTooltip:{fontSize:"0.75rem",color:"#94a3b8",marginTop:"0.25rem"}
+    infoTooltip:{fontSize:"0.75rem",color:"#94a3b8",marginTop:"0.25rem",display:"flex",alignItems:"center",gap:"0.25rem"},
+    autoBadge:{background:"#10b981",color:"#fff",padding:"2px 6px",borderRadius:"4px",fontSize:"0.7rem",fontWeight:"600",marginLeft:"0.5rem"},
+    loadingText:{color:"#94a3b8",fontSize:"0.85rem",fontStyle:"italic"}
   };
 
   return(
     <div style={styles.container}>
 
-      {/* HEADER */}
       <div style={styles.header}>
         <div style={styles.logo}>
           <span style={styles.logoIcon}>🏭</span>
           <div>
             <h1 style={styles.title}>MES – ATELIER CARDAGE</h1>
-            <p style={styles.subtitle}>Module Suivi Production • Version 2.0</p>
+            <p style={styles.subtitle}>Module Suivi Production • Version 2.0 • Intégration MES</p>
           </div>
         </div>
       </div>
 
-      {/* KPI - 3 indicateurs */}
       <div style={styles.kpiGrid}>
         <div style={{...styles.kpiCard, borderLeftColor: "#2563eb"}}>
           <div style={styles.kpiIcon}>📦</div>
@@ -272,7 +316,6 @@ const Production = () => {
         </div>
       </div>
 
-      {/* TABS */}
       <div style={styles.tabs}>
         <button 
           style={{
@@ -311,7 +354,7 @@ const Production = () => {
 
       <div style={styles.content}>
 
-        {/* FORM PRODUCTION */}
+        {/* FORM PRODUCTION - Version simplifiée N°OF seulement */}
         {activeTab === "production" && (
           <div style={{animation: "fadeIn 0.3s ease"}}>
             <h2 style={styles.formTitle}>📝 Saisie Production</h2>
@@ -319,41 +362,71 @@ const Production = () => {
             
             <form onSubmit={handleProduction}>
               <div style={styles.formGrid}>
-                {/* Machine */}
-                <div style={styles.formGroup}>
-                  <label style={styles.label}>🏭 Machine <span style={styles.requiredStar}>*</span></label>
-                  <select style={{...styles.select, ...(formErrors.machine ? styles.inputError : {})}} value={formProd.machine} onChange={(e)=>setFormProd({...formProd,machine:e.target.value})} required className={formErrors.machine ? "error-field" : ""}>
-                    <option value="">Sélectionner une machine</option>
-                    {machines.map(m=><option key={m} value={m}>{m}</option>)}
-                  </select>
-                  {formErrors.machine && <div style={styles.errorMessage}>⚠️ {formErrors.machine}</div>}
-                </div>
-
-                {/* OF */}
+                {/* N° Ordre de Fabrication - SIMPLIFIÉ : affiche seulement le N°OF */}
                 <div style={styles.formGroup}>
                   <label style={styles.label}>
                     📋 N° Ordre de Fabrication <span style={styles.requiredStar}>*</span>
                   </label>
-                  <input
-                    list="ofs"
-                    placeholder="Ex: OF-2026-001"
-                    value={formProd.of_id}
-                    onChange={(e)=>setFormProd({...formProd, of_id: e.target.value})}
-                    style={{...styles.input, ...(formErrors.of_id ? styles.inputError : {})}}
-                    className={formErrors.of_id ? "error-field" : ""}
+                  
+                  <select
+                    style={{...styles.select, ...(formErrors.of_id ? styles.inputError : {}), fontFamily: "monospace"}}
+                    value={formProd.of_id || ""}
+                    onChange={handleOFChange}
                     required
-                  />
-                  <datalist id="ofs">
-                    {ofs.map(o => (
-                      <option key={o.id} value={o.name} />
-                    ))}
-                  </datalist>
+                    className={formErrors.of_id ? "error-field" : ""}
+                  >
+                    <option value="">-- Sélectionnez un OF --</option>
+                    {loadingOFs ? (
+                      <option value="" disabled>⏳ Chargement des OFs...</option>
+                    ) : (
+                      ordresFabrication.map(of => (
+                        <option key={of.id} value={of.id}>
+                          {of.numero}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  
+                  {loadingOFs && (
+                    <div style={styles.loadingText}>⏳ Chargement des OFs depuis le module MES...</div>
+                  )}
+                  {!loadingOFs && ordresFabrication.length === 0 && (
+                    <div style={styles.infoMessage}>
+                      ℹ️ Aucun OF disponible. Veuillez créer des OF dans le module "Ordres de fabrication".
+                    </div>
+                  )}
+                  {!loadingOFs && ordresFabrication.length > 0 && (
+                    <div style={styles.infoTooltip}>
+                      💡 {ordresFabrication.length} OF(s) disponible(s)
+                    </div>
+                  )}
                   {formErrors.of_id && (
                     <div style={styles.errorMessage}>⚠️ {formErrors.of_id}</div>
                   )}
-                  <div style={styles.infoTooltip}>
-                    Vous pouvez sélectionner ou saisir manuellement le N° OF
-                  </div>
+                </div>
+
+                {/* Machine - auto-remplie et désactivée */}
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>
+                    🏭 Machine <span style={styles.requiredStar}>*</span>
+                    {formProd.machine && formProd.of_id && <span style={styles.autoBadge}>Auto</span>}
+                  </label>
+                  <select 
+                    style={{...styles.select, ...(formErrors.machine ? styles.inputError : {}), 
+                      background: formProd.machine && formProd.of_id ? "#f0fdf4" : "#fff"}} 
+                    value={formProd.machine} 
+                    onChange={(e)=>setFormProd({...formProd,machine:e.target.value})} 
+                    required 
+                    disabled={!!formProd.of_id}
+                    className={formErrors.machine ? "error-field" : ""}
+                  >
+                    <option value="">Sélectionner une machine</option>
+                    {machines.map(m=><option key={m} value={m}>{m}</option>)}
+                  </select>
+                  {formProd.machine && formProd.of_id && (
+                    <div style={styles.infoTooltip}>✅ Machine automatiquement renseignée depuis l'OF</div>
+                  )}
+                  {formErrors.machine && <div style={styles.errorMessage}>⚠️ {formErrors.machine}</div>}
                 </div>
 
                 {/* Fibre */}
@@ -401,7 +474,16 @@ const Production = () => {
               
               <div style={styles.buttonContainer}>
                 <button type="button" style={styles.secondaryBtn} onClick={()=>{
-                  setFormProd({machine:"",of_id:"",fibre:"",quantite:"",operateur:"",debut:"",fin:""});
+                  setFormProd({
+                    machine: "",
+                    of_id: "",
+                    of_numero: "",
+                    fibre: "",
+                    quantite: "",
+                    operateur: "",
+                    debut: "",
+                    fin: ""
+                  });
                   setFormErrors({});
                 }}>
                   🗑️ Réinitialiser
@@ -438,7 +520,14 @@ const Production = () => {
                   <label style={styles.label}>📦 Production <span style={styles.requiredStar}>*</span></label>
                   <select style={{...styles.select, ...(formErrors.production_id ? styles.inputError : {})}} value={formRebut.production_id} onChange={(e)=>setFormRebut({...formRebut,production_id:e.target.value})} required className={formErrors.production_id ? "error-field" : ""}>
                     <option value="">Sélectionner une production</option>
-                    {productions.map(p=><option key={p.id} value={p.id}>{p.machine} - {p.fibre} - {p.quantite} kg</option>)}
+                    {productions.map(p=>{
+                      const of = ordresFabrication.find(o => o.id === p.of_id);
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {of?.numero || p.of_numero || p.of_id} - {p.machine} - {p.fibre} - {p.quantite} kg
+                        </option>
+                      );
+                    })}
                   </select>
                   {formErrors.production_id && <div style={styles.errorMessage}>⚠️ {formErrors.production_id}</div>}
                 </div>
@@ -490,7 +579,7 @@ const Production = () => {
                   <thead>
                     <tr>
                       <th style={styles.th}>🏭 Machine</th>
-                      <th style={styles.th}>📋 OF</th>
+                      <th style={styles.th}>📋 N° OF</th>
                       <th style={styles.th}>🧵 Fibre</th>
                       <th style={styles.th}>⚖️ Quantité</th>
                       <th style={styles.th}>👤 Opérateur</th>
@@ -499,17 +588,24 @@ const Production = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {productions.map((p, index) => (
-                      <tr key={p.id} style={index % 2 === 0 ? {background: "#fff"} : {background: "#f8fafc"}}>
-                        <td style={styles.td}>{p.machine}</td>
-                        <td style={styles.td}>{ofs.find(o => o.id === p.of_id)?.name || p.of_id}</td>
-                        <td style={styles.td}>{p.fibre}</td>
-                        <td style={styles.td}>{p.quantite} kg</td>
-                        <td style={styles.td}>{p.operateur}</td>
-                        <td style={styles.td}>{p.debut}</td>
-                        <td style={styles.td}>{p.fin}</td>
-                      </tr>
-                    ))}
+                    {productions.map((p, index) => {
+                      const of = ordresFabrication.find(o => o.id === p.of_id);
+                      return (
+                        <tr key={p.id} style={index % 2 === 0 ? {background: "#fff"} : {background: "#f8fafc"}}>
+                          <td style={styles.td}>{p.machine}</td>
+                          <td style={styles.td}>
+                            <span style={{fontFamily: "monospace", fontWeight: "600"}}>
+                              {of?.numero || p.of_numero || p.of_id}
+                            </span>
+                           </td>
+                          <td style={styles.td}>{p.fibre}</td>
+                          <td style={styles.td}><strong>{p.quantite}</strong> kg</td>
+                          <td style={styles.td}>{p.operateur}</td>
+                          <td style={styles.td}>{p.debut}</td>
+                          <td style={styles.td}>{p.fin}</td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

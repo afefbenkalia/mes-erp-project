@@ -14,6 +14,7 @@ Dependency:
     pip install paho-mqtt
 """
 
+
 from __future__ import annotations
 
 import argparse
@@ -104,6 +105,7 @@ class MachineSim:
 
         self.schedule_next_state_change()
 
+
     def tick(self, interval_seconds: int) -> None:
         self.maybe_change_state()
 
@@ -173,7 +175,6 @@ def compute_global_metrics(machines: Dict[str, MachineSim]) -> dict:
         if total_production > 0
         else 0.0
     )
-
     oee = (availability / 100.0) * (performance / 100.0) * (quality / 100.0) * 100.0
     trs = oee
 
@@ -218,7 +219,7 @@ def load_machine_identifiers(api_url: str, limit: int = 4) -> List[str]:
     except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
         print(f"Could not load machines from API ({error}). Using fallback IDs: {', '.join(MACHINE_IDS[:limit])}")
         return MACHINE_IDS[:limit]
-
+    
 
 def run_simulation(api_url: str) -> None:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mes-simulator")
@@ -227,7 +228,9 @@ def run_simulation(api_url: str) -> None:
 
     machine_identifiers = load_machine_identifiers(api_url=api_url, limit=4)
     machines = {mid: MachineSim(machine_id=mid) for mid in machine_identifiers}
+
     running = True
+    last_refresh = time.time()  # 🆕 وقت آخر refresh
 
     def stop_handler(_sig, _frame):
         nonlocal running
@@ -242,10 +245,26 @@ def run_simulation(api_url: str) -> None:
     print(f"Publishing every {PUBLISH_INTERVAL_SECONDS}s for: {', '.join(machine_identifiers)}")
 
     while running:
+
+        # 🔄 refresh machines كل 30 ثانية
+        if time.time() - last_refresh > 30:
+            print("🔄 Reloading machines from API...")
+            new_ids = load_machine_identifiers(api_url=api_url, limit=10)
+
+            # ➕ إضافة machines الجديدة
+            for mid in new_ids:
+                if mid not in machines:
+                    print(f"🆕 New machine detected: {mid}")
+                    machines[mid] = MachineSim(machine_id=mid)
+
+            last_refresh = time.time()
+
+        # 🔁 simulation normale
         for machine in machines.values():
             machine.tick(PUBLISH_INTERVAL_SECONDS)
             payload = machine.to_payload()
             topic = MACHINE_TOPIC_TEMPLATE.format(id=machine.machine_id)
+
             client.publish(topic, json.dumps(payload), qos=0, retain=False)
 
             temp_warn = " ⚠ HIGH TEMP" if payload.get("warning") else ""
@@ -256,8 +275,10 @@ def run_simulation(api_url: str) -> None:
                 f"rej={payload['rejects']} temp={payload['temperature']}C{temp_warn}"
             )
 
+        # 🌍 global metrics
         global_payload = compute_global_metrics(machines)
         client.publish(GLOBAL_TOPIC, json.dumps(global_payload), qos=0, retain=False)
+
         print(
             f"[{datetime.now().strftime('%H:%M:%S')}] {GLOBAL_TOPIC} "
             f"oee={global_payload['oee']} avail={global_payload['availability']} "
@@ -269,7 +290,6 @@ def run_simulation(api_url: str) -> None:
     client.loop_stop()
     client.disconnect()
     print("MES simulator stopped.")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="MES MQTT realistic simulator")
@@ -288,7 +308,6 @@ def main() -> None:
     if not args.start:
         print("Simulation is disabled. Use --start to run.")
         return
-
     run_simulation(api_url=args.machines_api_url)
 
 
