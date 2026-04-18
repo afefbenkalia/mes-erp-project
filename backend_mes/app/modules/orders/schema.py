@@ -3,7 +3,7 @@ from typing import Optional, List
 from datetime import date
 
 
-# ── Schéma de réception depuis l'ERP ──────────────────────────────────────────
+# Schéma de réception depuis l'ERP
 class OFCreate(BaseModel):
     numero: str
     machine: str
@@ -13,7 +13,7 @@ class OFCreate(BaseModel):
     date_fin: Optional[date] = None
 
 
-# ── Schéma de réponse ─────────────────────────────────────────────────────────
+# Schéma de réponse
 class OFOut(BaseModel):
     id: int
     numero: str
@@ -22,7 +22,7 @@ class OFOut(BaseModel):
     quantite: int
     date_debut: Optional[date]
     date_fin: Optional[date]
-    statut: str
+    statut: str  # Ce champ est calculé, pas stocké en base
 
     class Config:
         from_attributes = True

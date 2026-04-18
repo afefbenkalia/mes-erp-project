@@ -1,4 +1,4 @@
-// Production.jsx - Version avec N°OF seulement
+// Production.jsx - Version corrigée (seulement les parties modifiées)
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -12,14 +12,16 @@ const Production = () => {
   const [rebuts, setRebuts] = useState([]);
   const [ordresFabrication, setOrdresFabrication] = useState([]);
   const [loadingOFs, setLoadingOFs] = useState(false);
+  const [errorOFs, setErrorOFs] = useState(false); // Ajouté
 
   // États pour les formulaires
   const [formProd, setFormProd] = useState({
     machine: "",
     of_id: "",
     of_numero: "",
-    fibre: "",
-    quantite: "",
+    produit_fini: "",
+    quantite_produit_fini: "",
+    quantite_matiere_premiere: "",
     operateur: "",
     debut: "",
     fin: ""
@@ -43,16 +45,18 @@ const Production = () => {
 
   const machines = ["Carde 01","Carde 02","Carde 03","Carde 04","Carde 05"];
   const operateurs = ["Jean Dupont","Marie Martin","Pierre Durand","Sophie Lefebvre","Lucas Bernard"];
-  const typesFibre = ["Coton","Laine","Polyester","Acrylique","Lin","Soie"];
+  const produitsFini = ["Ruban 100% coton","Ruban Laine","Ruban Polyester","Ruban Acrylique","Ruban Lin","Ruban Soie"];
   const typesDefaut = ["Néppes","Impuretés","Casses","Irrégularité","Souillure","Autre défaut"];
 
   // =========================
   // KPI
   // =========================
 
-  const totalProd = productions.reduce((acc,p)=> acc + Number(p.quantite || 0),0);
+  const totalProd = productions.reduce((acc,p)=> acc + Number(p.quantite_produit_fini || 0),0);
+  const totalMatierePremiere = productions.reduce((acc,p)=> acc + Number(p.quantite_matiere_premiere || 0),0);
   const totalRebut = rebuts.reduce((acc,r)=> acc + Number(r.quantite || 0),0);
   const tauxQualite = totalProd ? (((totalProd-totalRebut)/totalProd)*100).toFixed(1) : 0;
+  const rendement = totalMatierePremiere ? ((totalProd / totalMatierePremiere) * 100).toFixed(1) : 0;
 
   // =========================
   // LOAD DATA
@@ -60,16 +64,23 @@ const Production = () => {
 
   const loadOrdresFabrication = async () => {
     setLoadingOFs(true);
+    setErrorOFs(false);
     try {
-      const response = await axios.get(MES_OF_URL + "/");
+      // Correction: Enlever le slash supplémentaire
+      const response = await axios.get(MES_OF_URL);
+      console.log("✅ OFs chargés:", response.data);
       setOrdresFabrication(response.data);
     } catch (err) {
-      console.error("Erreur lors du chargement des OFs MES:", err);
-      setOrdresFabrication([
+      console.error("❌ Erreur lors du chargement des OFs MES:", err);
+      setErrorOFs(true);
+      // Données mockées en cas d'erreur pour que l'interface fonctionne quand même
+      const mockOFs = [
         { id: 1, numero: "OF-001", machine: "Carde 01", produit: "Ruban cardé coton", quantite: 500 },
         { id: 2, numero: "OF-002", machine: "Carde 02", produit: "Ruban cardé polyester", quantite: 750 },
         { id: 3, numero: "OF-003", machine: "Carde 03", produit: "Ruban cardé mélange", quantite: 600 },
-      ]);
+      ];
+      setOrdresFabrication(mockOFs);
+      console.log("📦 Utilisation des données mockées pour les OFs");
     } finally {
       setLoadingOFs(false);
     }
@@ -81,12 +92,17 @@ const Production = () => {
         const prod = await axios.get(BASE_URL);
         setProductions(prod.data);
 
-        const reb = await axios.get(`${BASE_URL}/rebuts`);
-        setRebuts(reb.data);
+        try {
+          const reb = await axios.get(`${BASE_URL}/rebuts`);
+          setRebuts(reb.data);
+        } catch (rebErr) {
+          console.error("Erreur chargement rebuts:", rebErr);
+          setRebuts([]);
+        }
 
         await loadOrdresFabrication();
       }catch(err){
-        console.error(err);
+        console.error("Erreur générale:", err);
       }
     };
     load();
@@ -132,7 +148,7 @@ const Production = () => {
         ...formProd,
         of_id: selectedOF.id,
         of_numero: selectedOF.numero,
-        machine: selectedOF.machine
+        machine: selectedOF.machine || formProd.machine
       });
       
       setSuccessMessage(`✅ OF sélectionné: ${selectedOF.numero}`);
@@ -152,8 +168,11 @@ const Production = () => {
     
     if (!formProd.machine) errors.machine = "Veuillez sélectionner une machine";
     if (!formProd.of_id) errors.of_id = "Veuillez sélectionner un OF valide";
-    if (!formProd.fibre) errors.fibre = "Veuillez sélectionner une fibre";
-    if (!formProd.quantite || formProd.quantite <= 0) errors.quantite = "La quantité doit être supérieure à 0";
+    if (!formProd.produit_fini) errors.produit_fini = "Veuillez sélectionner un produit fini";
+    if (!formProd.quantite_produit_fini || formProd.quantite_produit_fini <= 0) 
+      errors.quantite_produit_fini = "La quantité produit fini doit être supérieure à 0";
+    if (!formProd.quantite_matiere_premiere || formProd.quantite_matiere_premiere <= 0) 
+      errors.quantite_matiere_premiere = "La quantité matière première doit être supérieure à 0";
     if (!formProd.operateur) errors.operateur = "Veuillez sélectionner un opérateur";
     if (!formProd.debut) errors.debut = "Veuillez saisir l'heure de début";
     if (!formProd.fin) errors.fin = "Veuillez saisir l'heure de fin";
@@ -197,8 +216,9 @@ const Production = () => {
         machine: "",
         of_id: "",
         of_numero: "",
-        fibre: "",
-        quantite: "",
+        produit_fini: "",
+        quantite_produit_fini: "",
+        quantite_matiere_premiere: "",
         operateur: "",
         debut: "",
         fin: ""
@@ -206,8 +226,8 @@ const Production = () => {
       setSuccessMessage("✅ Production enregistrée avec succès !");
       setTimeout(() => setSuccessMessage(""), 3000);
     }catch(err){
-      alert("❌ Erreur lors de l'enregistrement de la production");
-      console.error(err);
+      console.error("Erreur détaillée:", err);
+      alert("❌ Erreur lors de l'enregistrement de la production\n" + (err.response?.data?.detail || err.message));
     } finally {
       setIsSubmitting(false);
     }
@@ -232,13 +252,14 @@ const Production = () => {
       setSuccessMessage("✅ Rebut enregistré avec succès !");
       setTimeout(() => setSuccessMessage(""), 3000);
     }catch(err){
-      alert("❌ Erreur lors de l'enregistrement du rebut");
-      console.error(err);
+      console.error("Erreur détaillée:", err);
+      alert("❌ Erreur lors de l'enregistrement du rebut\n" + (err.response?.data?.detail || err.message));
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Styles (gardez vos styles existants - je ne les répète pas pour la lisibilité)
   const styles = {
     container:{padding:"2rem",background:"#f8fafc",minHeight:"100vh",fontFamily:"'Inter', -apple-system, BlinkMacSystemFont, sans-serif"},
     header:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"2rem",background:"#fff",padding:"1.5rem 2rem",borderRadius:"16px",boxShadow:"0 4px 6px -1px rgba(0,0,0,0.1)"},
@@ -246,7 +267,7 @@ const Production = () => {
     logoIcon:{fontSize:"2.5rem"},
     title:{margin:0,color:"#0f172a",fontSize:"1.8rem",fontWeight:"600"},
     subtitle:{margin:0,color:"#64748b",fontSize:"0.9rem"},
-    kpiGrid:{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"1.5rem",marginBottom:"2rem"},
+    kpiGrid:{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"1.5rem",marginBottom:"2rem"},
     kpiCard:{background:"#fff",padding:"1.5rem",borderRadius:"12px",boxShadow:"0 4px 6px -1px rgba(0,0,0,0.1)",display:"flex",alignItems:"center",gap:"1rem",borderLeft:"4px solid"},
     kpiIcon:{fontSize:"2rem",background:"#f1f5f9",padding:"0.75rem",borderRadius:"12px"},
     kpiLabel:{margin:"0 0 0.25rem 0",color:"#64748b",fontSize:"0.9rem",fontWeight:"500"},
@@ -271,6 +292,7 @@ const Production = () => {
     btnIcon:{fontSize:"1.1rem"},
     successMessage:{color:"#10b981",fontSize:"0.9rem",marginTop:"0.5rem",padding:"0.75rem",background:"#f0fdf4",borderRadius:"8px",borderLeft:"3px solid #10b981",display:"flex",alignItems:"center",gap:"0.5rem",animation:"slideIn 0.3s ease"},
     infoMessage:{color:"#3b82f6",fontSize:"0.9rem",marginTop:"0.5rem",padding:"0.75rem",background:"#eff6ff",borderRadius:"8px",borderLeft:"3px solid #3b82f6",display:"flex",alignItems:"center",gap:"0.5rem",animation:"slideIn 0.3s ease"},
+    warningMessage:{color:"#d97706",fontSize:"0.9rem",marginTop:"0.5rem",padding:"0.75rem",background:"#fffbeb",borderRadius:"8px",borderLeft:"3px solid #f59e0b",display:"flex",alignItems:"center",gap:"0.5rem"},
     table:{width:"100%",borderCollapse:"collapse",fontSize:"0.95rem"},
     th:{textAlign:"left",padding:"0.75rem",borderBottom:"2px solid #e2e8f0",color:"#64748b",fontWeight:"600"},
     td:{padding:"0.75rem",borderBottom:"1px solid #e2e8f0",color:"#1e293b"},
@@ -300,6 +322,13 @@ const Production = () => {
             <p style={styles.kpiValue}>{totalProd} kg</p>
           </div>
         </div>
+        <div style={{...styles.kpiCard, borderLeftColor: "#8b5cf6"}}>
+          <div style={styles.kpiIcon}>🌾</div>
+          <div>
+            <p style={styles.kpiLabel}>Matière Première</p>
+            <p style={styles.kpiValue}>{totalMatierePremiere} kg</p>
+          </div>
+        </div>
         <div style={{...styles.kpiCard, borderLeftColor: "#ef4444"}}>
           <div style={styles.kpiIcon}>⚠️</div>
           <div>
@@ -310,8 +339,8 @@ const Production = () => {
         <div style={{...styles.kpiCard, borderLeftColor: "#10b981"}}>
           <div style={styles.kpiIcon}>✅</div>
           <div>
-            <p style={styles.kpiLabel}>Taux Qualité</p>
-            <p style={styles.kpiValue}>{tauxQualite}%</p>
+            <p style={styles.kpiLabel}>Rendement</p>
+            <p style={styles.kpiValue}>{rendement}%</p>
           </div>
         </div>
       </div>
@@ -354,7 +383,7 @@ const Production = () => {
 
       <div style={styles.content}>
 
-        {/* FORM PRODUCTION - Version simplifiée N°OF seulement */}
+        {/* FORM PRODUCTION */}
         {activeTab === "production" && (
           <div style={{animation: "fadeIn 0.3s ease"}}>
             <h2 style={styles.formTitle}>📝 Saisie Production</h2>
@@ -362,7 +391,7 @@ const Production = () => {
             
             <form onSubmit={handleProduction}>
               <div style={styles.formGrid}>
-                {/* N° Ordre de Fabrication - SIMPLIFIÉ : affiche seulement le N°OF */}
+                {/* N° Ordre de Fabrication */}
                 <div style={styles.formGroup}>
                   <label style={styles.label}>
                     📋 N° Ordre de Fabrication <span style={styles.requiredStar}>*</span>
@@ -376,30 +405,35 @@ const Production = () => {
                     className={formErrors.of_id ? "error-field" : ""}
                   >
                     <option value="">-- Sélectionnez un OF --</option>
-                    {loadingOFs ? (
-                      <option value="" disabled>⏳ Chargement des OFs...</option>
-                    ) : (
-                      ordresFabrication.map(of => (
-                        <option key={of.id} value={of.id}>
-                          {of.numero}
-                        </option>
-                      ))
-                    )}
+                    {!loadingOFs && !errorOFs && ordresFabrication.map(of => (
+                      <option key={of.id} value={of.id}>
+                        {of.numero} {of.machine ? `- ${of.machine}` : ''}
+                      </option>
+                    ))}
                   </select>
                   
                   {loadingOFs && (
                     <div style={styles.loadingText}>⏳ Chargement des OFs depuis le module MES...</div>
                   )}
-                  {!loadingOFs && ordresFabrication.length === 0 && (
+                  
+                  {!loadingOFs && errorOFs && (
+                    <div style={styles.warningMessage}>
+                      ⚠️ Impossible de charger les OFs. Vérifiez que le backend est démarré sur {MES_OF_URL}
+                    </div>
+                  )}
+                  
+                  {!loadingOFs && !errorOFs && ordresFabrication.length === 0 && (
                     <div style={styles.infoMessage}>
                       ℹ️ Aucun OF disponible. Veuillez créer des OF dans le module "Ordres de fabrication".
                     </div>
                   )}
-                  {!loadingOFs && ordresFabrication.length > 0 && (
+                  
+                  {!loadingOFs && !errorOFs && ordresFabrication.length > 0 && (
                     <div style={styles.infoTooltip}>
                       💡 {ordresFabrication.length} OF(s) disponible(s)
                     </div>
                   )}
+                  
                   {formErrors.of_id && (
                     <div style={styles.errorMessage}>⚠️ {formErrors.of_id}</div>
                   )}
@@ -429,22 +463,48 @@ const Production = () => {
                   {formErrors.machine && <div style={styles.errorMessage}>⚠️ {formErrors.machine}</div>}
                 </div>
 
-                {/* Fibre */}
+                {/* Produit fini */}
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>🧵 Fibre <span style={styles.requiredStar}>*</span></label>
-                  <select style={{...styles.select, ...(formErrors.fibre ? styles.inputError : {})}} value={formProd.fibre} onChange={(e)=>setFormProd({...formProd,fibre:e.target.value})} required className={formErrors.fibre ? "error-field" : ""}>
-                    <option value="">Sélectionner une fibre</option>
-                    {typesFibre.map(f=><option key={f} value={f}>{f}</option>)}
+                  <label style={styles.label}>🧵 Produit fini <span style={styles.requiredStar}>*</span></label>
+                  <select style={{...styles.select, ...(formErrors.produit_fini ? styles.inputError : {})}} value={formProd.produit_fini} onChange={(e)=>setFormProd({...formProd,produit_fini:e.target.value})} required className={formErrors.produit_fini ? "error-field" : ""}>
+                    <option value="">Sélectionner un produit fini</option>
+                    {produitsFini.map(p=><option key={p} value={p}>{p}</option>)}
                   </select>
-                  {formErrors.fibre && <div style={styles.errorMessage}>⚠️ {formErrors.fibre}</div>}
+                  {formErrors.produit_fini && <div style={styles.errorMessage}>⚠️ {formErrors.produit_fini}</div>}
                 </div>
 
-                {/* Quantité */}
+                {/* Quantité Produit Fini */}
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>⚖️ Quantité (kg) <span style={styles.requiredStar}>*</span></label>
-                  <input style={{...styles.input, ...(formErrors.quantite ? styles.inputError : {})}} type="number" placeholder="Ex: 500" value={formProd.quantite} onChange={(e)=>setFormProd({...formProd,quantite:e.target.value})} required className={formErrors.quantite ? "error-field" : ""}/>
-                  {formErrors.quantite && <div style={styles.errorMessage}>⚠️ {formErrors.quantite}</div>}
-                  <div style={styles.infoTooltip}>Quantité en kilogrammes (kg)</div>
+                  <label style={styles.label}>⚖️ Quantité Produit Fini (kg) <span style={styles.requiredStar}>*</span></label>
+                  <input 
+                    style={{...styles.input, ...(formErrors.quantite_produit_fini ? styles.inputError : {})}} 
+                    type="number" 
+                    step="0.01"
+                    placeholder="Ex: 450" 
+                    value={formProd.quantite_produit_fini} 
+                    onChange={(e)=>setFormProd({...formProd,quantite_produit_fini:e.target.value})} 
+                    required 
+                    className={formErrors.quantite_produit_fini ? "error-field" : ""}
+                  />
+                  {formErrors.quantite_produit_fini && <div style={styles.errorMessage}>⚠️ {formErrors.quantite_produit_fini}</div>}
+                  <div style={styles.infoTooltip}>Quantité de produit fini en kilogrammes (kg)</div>
+                </div>
+
+                {/* Quantité Matière Première */}
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>🌾 Quantité Matière Première (kg) <span style={styles.requiredStar}>*</span></label>
+                  <input 
+                    style={{...styles.input, ...(formErrors.quantite_matiere_premiere ? styles.inputError : {})}} 
+                    type="number" 
+                    step="0.01"
+                    placeholder="Ex: 500" 
+                    value={formProd.quantite_matiere_premiere} 
+                    onChange={(e)=>setFormProd({...formProd,quantite_matiere_premiere:e.target.value})} 
+                    required 
+                    className={formErrors.quantite_matiere_premiere ? "error-field" : ""}
+                  />
+                  {formErrors.quantite_matiere_premiere && <div style={styles.errorMessage}>⚠️ {formErrors.quantite_matiere_premiere}</div>}
+                  <div style={styles.infoTooltip}>Quantité de matière première consommée en kilogrammes (kg)</div>
                 </div>
 
                 {/* Opérateur */}
@@ -478,8 +538,9 @@ const Production = () => {
                     machine: "",
                     of_id: "",
                     of_numero: "",
-                    fibre: "",
-                    quantite: "",
+                    produit_fini: "",
+                    quantite_produit_fini: "",
+                    quantite_matiere_premiere: "",
                     operateur: "",
                     debut: "",
                     fin: ""
@@ -524,7 +585,7 @@ const Production = () => {
                       const of = ordresFabrication.find(o => o.id === p.of_id);
                       return (
                         <option key={p.id} value={p.id}>
-                          {of?.numero || p.of_numero || p.of_id} - {p.machine} - {p.fibre} - {p.quantite} kg
+                          {of?.numero || p.of_numero || p.of_id} - {p.machine} - {p.produit_fini} - {p.quantite_produit_fini} kg PF / {p.quantite_matiere_premiere} kg MP
                         </option>
                       );
                     })}
@@ -543,7 +604,7 @@ const Production = () => {
 
                 <div style={styles.formGroup}>
                   <label style={styles.label}>⚖️ Quantité rebut (kg) <span style={styles.requiredStar}>*</span></label>
-                  <input style={{...styles.input, ...(formErrors.quantite ? styles.inputError : {})}} type="number" placeholder="Ex: 50" value={formRebut.quantite} onChange={(e)=>setFormRebut({...formRebut,quantite:e.target.value})} required className={formErrors.quantite ? "error-field" : ""}/>
+                  <input style={{...styles.input, ...(formErrors.quantite ? styles.inputError : {})}} type="number" step="0.01" placeholder="Ex: 50" value={formRebut.quantite} onChange={(e)=>setFormRebut({...formRebut,quantite:e.target.value})} required className={formErrors.quantite ? "error-field" : ""}/>
                   {formErrors.quantite && <div style={styles.errorMessage}>⚠️ {formErrors.quantite}</div>}
                   <div style={styles.infoTooltip}>Quantité en kilogrammes (kg)</div>
                 </div>
@@ -580,8 +641,10 @@ const Production = () => {
                     <tr>
                       <th style={styles.th}>🏭 Machine</th>
                       <th style={styles.th}>📋 N° OF</th>
-                      <th style={styles.th}>🧵 Fibre</th>
-                      <th style={styles.th}>⚖️ Quantité</th>
+                      <th style={styles.th}>🧵 Produit fini</th>
+                      <th style={styles.th}>⚖️ Quantité PF</th>
+                      <th style={styles.th}>🌾 Quantité MP</th>
+                      <th style={styles.th}>📊 Rendement</th>
                       <th style={styles.th}>👤 Opérateur</th>
                       <th style={styles.th}>⏰ Début</th>
                       <th style={styles.th}>⏰ Fin</th>
@@ -590,6 +653,8 @@ const Production = () => {
                   <tbody>
                     {productions.map((p, index) => {
                       const of = ordresFabrication.find(o => o.id === p.of_id);
+                      const rendementProd = p.quantite_matiere_premiere ? 
+                        ((p.quantite_produit_fini / p.quantite_matiere_premiere) * 100).toFixed(1) : 0;
                       return (
                         <tr key={p.id} style={index % 2 === 0 ? {background: "#fff"} : {background: "#f8fafc"}}>
                           <td style={styles.td}>{p.machine}</td>
@@ -597,9 +662,18 @@ const Production = () => {
                             <span style={{fontFamily: "monospace", fontWeight: "600"}}>
                               {of?.numero || p.of_numero || p.of_id}
                             </span>
-                           </td>
-                          <td style={styles.td}>{p.fibre}</td>
-                          <td style={styles.td}><strong>{p.quantite}</strong> kg</td>
+                          </td>
+                          <td style={styles.td}>{p.produit_fini}</td>
+                          <td style={styles.td}><strong>{p.quantite_produit_fini}</strong> kg</td>
+                          <td style={styles.td}>{p.quantite_matiere_premiere} kg</td>
+                          <td style={styles.td}>
+                            <span style={{
+                              color: rendementProd >= 85 ? "#10b981" : rendementProd >= 70 ? "#f59e0b" : "#ef4444",
+                              fontWeight: "600"
+                            }}>
+                              {rendementProd}%
+                            </span>
+                          </td>
                           <td style={styles.td}>{p.operateur}</td>
                           <td style={styles.td}>{p.debut}</td>
                           <td style={styles.td}>{p.fin}</td>

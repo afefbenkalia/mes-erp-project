@@ -1,4 +1,4 @@
-// OrdresFabrication.jsx  — MES (corrigé)
+// OrdresFabrication.jsx — MES (CORRIGÉ)
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
@@ -7,10 +7,18 @@ const MES_PROD_URL = "http://127.0.0.1:8000/api/productions";
 
 const MACHINES = ["Carde 01", "Carde 02", "Carde 03", "Carde 04", "Carde 05"];
 
-const computeStatut = (of) => {
-  if (!of.productions || of.productions.length === 0) return "Planifié";
-  const produced = of.productions.reduce((sum, p) => sum + Number(p.quantite), 0);
-  if (produced >= Number(of.quantite)) return "Terminé";
+// ✅ CORRIGÉ: Utiliser quantite_produit_fini au lieu de quantite
+const computeStatut = (of, productions = []) => {
+  if (!productions || productions.length === 0) return "Planifié";
+  
+  const produced = productions.reduce((sum, p) => {
+    const qty = Number(p.quantite_produit_fini || p.quantite || 0);
+    return sum + qty;
+  }, 0);
+  
+  const quantiteTotale = Number(of.quantite || 0);
+  
+  if (produced >= quantiteTotale && quantiteTotale > 0) return "Terminé";
   if (produced > 0) return "En cours";
   return "Planifié";
 };
@@ -34,19 +42,34 @@ const OrdresFabrication = () => {
   const fetchOF = async () => {
     setLoading(true);
     try {
-      const res = await axios.get(MES_OF_URL + "/");
+      // ✅ Récupérer tous les OF
+      const res = await axios.get(`${MES_OF_URL}/`);
       const ofsData = res.data;
 
+      // ✅ Pour chaque OF, récupérer ses productions et calculer le statut
       const ofsWithStatus = await Promise.all(
         ofsData.map(async (of) => {
           try {
+            // Récupérer les productions pour cet OF
             const prodRes = await axios.get(`${MES_PROD_URL}/?of_id=${of.id}`);
-            of.productions = prodRes.data;
-          } catch {
-            of.productions = [];
+            const productions = prodRes.data;
+            
+            // ✅ Calculer le statut avec les productions
+            const statut = computeStatut(of, productions);
+            
+            return {
+              ...of,
+              productions: productions,
+              statut: statut
+            };
+          } catch (error) {
+            console.error(`Erreur chargement productions OF ${of.id}:`, error);
+            return {
+              ...of,
+              productions: [],
+              statut: "Planifié"
+            };
           }
-          of.statut = computeStatut(of);
-          return of;
         })
       );
 
@@ -58,7 +81,9 @@ const OrdresFabrication = () => {
     }
   };
 
-  useEffect(() => { fetchOF(); }, []);
+  useEffect(() => { 
+    fetchOF(); 
+  }, []);
 
   const getCurrentDate = () => {
     const days = ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
@@ -74,7 +99,7 @@ const OrdresFabrication = () => {
 
   const filteredOFs = ofs.filter(o =>
     (!filterMachine || o.machine === filterMachine) &&
-    (!filterOF || o.numero.toLowerCase().includes(filterOF.toLowerCase())) &&
+    (!filterOF || o.numero?.toLowerCase().includes(filterOF.toLowerCase())) &&
     (!filterStatut || o.statut === filterStatut) &&
     (!filterDate || o.date_debut === filterDate)
   );
@@ -120,7 +145,7 @@ const OrdresFabrication = () => {
       <div style={s.content}>
         <h2 style={s.sectionTitle}>Liste des Ordres de Fabrication</h2>
 
-        {/* 4 FILTRES */}
+        {/* FILTRES */}
         <div style={s.filterRow}>
           <select style={s.select} value={filterMachine} onChange={e => setFilterMachine(e.target.value)}>
             <option value="">Toutes les machines</option>
@@ -167,8 +192,7 @@ const OrdresFabrication = () => {
             <table style={s.table}>
               <thead>
                 <tr>
-                  {/* ✅ CORRIGÉ: 7 colonnes <th> = 7 colonnes <td> */}
-                  {["N° OF", "Machine", "Produit", "Quantité", "Début", "Fin", "Statut"].map(h => (
+                  {["N° OF", "Machine", "Produit", "Quantité", "Produit", "Début", "Fin", "Statut"].map(h => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
@@ -176,6 +200,10 @@ const OrdresFabrication = () => {
               <tbody>
                 {filteredOFs.map((o, i) => {
                   const ss = STATUT_STYLE[o.statut] || { bg: "#f1f5f9", color: "#475569" };
+                  // Calculer la quantité totale produite pour affichage
+                  const totalProduit = o.productions?.reduce((sum, p) => 
+                    sum + Number(p.quantite_produit_fini || 0), 0) || 0;
+                  
                   return (
                     <tr key={o.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
                       <td style={s.td}>
@@ -183,7 +211,14 @@ const OrdresFabrication = () => {
                       </td>
                       <td style={s.td}>{o.machine}</td>
                       <td style={s.td}>{o.produit}</td>
-                      <td style={s.td}><strong>{o.quantite}</strong> kg</td>
+                      <td style={s.td}>
+                        <strong>{o.quantite}</strong> kg
+                        {totalProduit > 0 && (
+                          <span style={{ fontSize: "0.75rem", color: "#64748b", marginLeft: "0.5rem" }}>
+                            ({totalProduit} kg prod.)
+                          </span>
+                        )}
+                      </td>
                       <td style={s.td}>{o.date_debut || "—"}</td>
                       <td style={s.td}>{o.date_fin || "—"}</td>
                       <td style={s.td}>

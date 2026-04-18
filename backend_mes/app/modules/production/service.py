@@ -1,23 +1,24 @@
-
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from app.modules.production.model import Production
+from app.modules.production.model import Production, HistoriqueProduction
 from app.modules.orders.model import OF
-from app.modules.production import model
 
 
-
-def create_production(db, data):
-    # rechercher l'OF par numero
+def create_production(db: Session, data):
+    """Crée une production et met à jour le statut de l'OF"""
+    
+    # Rechercher l'OF par ID
     of = db.query(OF).filter(OF.id == data.of_id).first()
 
     if not of:
         raise HTTPException(status_code=404, detail="OF introuvable")
 
+    # Créer l'enregistrement de production
     prod = Production(
         machine=data.machine,
-        fibre=data.fibre,
-        quantite=data.quantite,
+        produit_fini=data.produit_fini,
+        quantite_produit_fini=data.quantite_produit_fini,
+        quantite_matiere_premiere=data.quantite_matiere_premiere,
         operateur=data.operateur,
         debut=data.debut,
         fin=data.fin,
@@ -29,6 +30,20 @@ def create_production(db, data):
     db.commit()
     db.refresh(prod)
 
+    # Ajouter à l'historique
+    hist = HistoriqueProduction(
+        machine=prod.machine,
+        of_id=prod.of_id,
+        quantite_produit_fini=prod.quantite_produit_fini,
+        quantite_matiere_premiere=prod.quantite_matiere_premiere,
+        evenement="production"
+    )
+    db.add(hist)
+    db.commit()
+
+    # Le statut de l'OF n'est PAS stocké en base
+    # Il sera calculé dynamiquement lors des requêtes GET
+    
     return prod
 
 
@@ -41,7 +56,7 @@ def create_rebut(db: Session, data):
 
     hist = model.HistoriqueProduction(
         machine=rebut.machine,
-        quantite=rebut.quantite,
+        quantite_produit_fini=rebut.quantite,
         evenement="rebut"
     )
 

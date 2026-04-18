@@ -9,8 +9,9 @@ from typing import Optional
 
 class ProductionCreate(BaseModel):
     machine: str
-    fibre: str
-    quantite: float
+    produit_fini: str
+    quantite_produit_fini: float  # Renommé
+    quantite_matiere_premiere: float  # Nouveau champ
     operateur: Optional[str] = None
     debut: Optional[str] = None
     fin: Optional[str] = None

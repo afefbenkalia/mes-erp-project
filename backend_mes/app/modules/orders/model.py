@@ -12,6 +12,7 @@ class OF(Base):
     quantite = Column(Integer, nullable=False)
     date_debut = Column(Date, nullable=True)
     date_fin = Column(Date, nullable=True)
-    statut = Column(String, default="Planifié")
+    # ⚠️ Supprimer le champ statut de la base de données
+    # statut = Column(String, default="Planifié")  # À SUPPRIMER
 
     productions = relationship("Production", back_populates="of")

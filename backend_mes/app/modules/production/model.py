@@ -9,8 +9,9 @@ class Production(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     machine = Column(String, nullable=False)
-    fibre = Column(String, nullable=False)
-    quantite = Column(Float, nullable=False)
+    produit_fini = Column(String, nullable=False)
+    quantite_produit_fini = Column(Float, nullable=False)  # Renommé
+    quantite_matiere_premiere = Column(Float, nullable=False)  # Nouveau champ
     operateur = Column(String)
     debut = Column(String)
     fin = Column(String)
@@ -60,7 +61,8 @@ class HistoriqueProduction(Base):
 
     machine = Column(String)
     of_id = Column(Integer)
-    quantite = Column(Float)
+    quantite_produit_fini = Column(Float)  # Renommé
+    quantite_matiere_premiere = Column(Float)  # Nouveau champ
 
     evenement = Column(String)
 
