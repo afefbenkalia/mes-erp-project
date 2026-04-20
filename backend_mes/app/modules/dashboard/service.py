@@ -44,17 +44,20 @@ def get_production_summary(db: Session) -> dict[str, Any]:
 
     machine_totals: dict[str, float] = defaultdict(float)
     total_q = 0.0
+    total_mp = 0.0  # Nouveau: total matière première
 
+    # CORRECTION: utiliser quantite_produit_fini au lieu de quantite
     for p in productions:
-        total_q += float(p.quantite or 0)
-        machine_totals[p.machine or "—"] += float(p.quantite or 0)
+        total_q += float(p.quantite_produit_fini or 0)
+        total_mp += float(p.quantite_matiere_premiere or 0)  # Ajout MP
+        machine_totals[p.machine or "—"] += float(p.quantite_produit_fini or 0)
         h = _parse_debut_hour(p.debut)
         dt = datetime.combine(p.date, datetime.min.time()) + timedelta(hours=h)
         if dt > now:
             dt = datetime.combine(p.date, datetime.min.time()) + timedelta(hours=12)
         idx = int((dt - since_dt).total_seconds() // 3600)
         if 0 <= idx < 24:
-            buckets[idx] += float(p.quantite or 0)
+            buckets[idx] += float(p.quantite_produit_fini or 0)
 
     rebut_q = sum(float(r.quantite or 0) for r in rebuts)
     good_q = max(0.0, total_q - rebut_q)
@@ -62,6 +65,10 @@ def get_production_summary(db: Session) -> dict[str, Any]:
         100.0 * good_q / (total_q + 1e-9) if total_q > 0 else 100.0
     )
     quality = max(0.0, min(100.0, quality))
+
+    # Nouveau: calcul du rendement matière
+    rendement = 100.0 * total_q / (total_mp + 1e-9) if total_mp > 0 else 100.0
+    rendement = max(0.0, min(100.0, rendement))
 
     run = sum(float(t.fonctionnement or 0) for t in temps_rows)
     stop = sum(float(t.arret or 0) for t in temps_rows)
@@ -97,6 +104,8 @@ def get_production_summary(db: Session) -> dict[str, Any]:
     return {
         "kpis": {
             "total_production_24h": round(total_q, 2),
+            "total_matiere_premiere_24h": round(total_mp, 2),  # Nouveau
+            "rendement": round(rendement, 1),  # Nouveau
             "oee": round(oee, 1),
             "availability": round(availability, 1),
             "performance": round(performance, 1),

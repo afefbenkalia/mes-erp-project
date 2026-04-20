@@ -9,20 +9,25 @@ class Production(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     machine = Column(String, nullable=False)
+
+    produit_fini = Column(String, nullable=False)
     fibre = Column(String, nullable=False)
-    quantite = Column(Float, nullable=False)
+
+    quantite_produit_fini = Column(Float, nullable=False)
+    quantite_matiere_premiere = Column(Float, nullable=False)
+
     operateur = Column(String)
     debut = Column(String)
     fin = Column(String)
+
     date = Column(Date, default=date.today)
-    of_id = Column(Integer, ForeignKey("ordres_fabrication.id"))    # relation OF
-   
-   
+
+    of_id = Column(Integer, ForeignKey("ordres_fabrication.id"))
+    of_numero = Column(String)
+
     of = relationship("OF", back_populates="productions")
 
-    # relation rebuts
     rebuts = relationship("Rebut", back_populates="production")
-
 
 class Rebut(Base):
     __tablename__ = "rebuts"
@@ -59,7 +64,8 @@ class HistoriqueProduction(Base):
 
     machine = Column(String)
     of_id = Column(Integer)
-    quantite = Column(Float)
+    quantite_produit_fini = Column(Float)  # Renommé
+    quantite_matiere_premiere = Column(Float)  # Nouveau champ
 
     evenement = Column(String)
 

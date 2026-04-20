@@ -72,7 +72,7 @@ function CreateLotModal({ isOpen, onClose, onLotCreated }) {
     };
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/traceability/lots", {
+      const response = await fetch("http://127.0.0.1:8000/api/traceability/lots", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(lotData),
@@ -413,7 +413,7 @@ export default function Traceability() {
   const fetchLots = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:8000/traceability/lots");
+      const response = await fetch("http://127.0.0.1:8000/api/traceability/lots");
       if (!response.ok) throw new Error('Erreur lors du chargement');
       const data = await response.json();
       setLots(data);
@@ -466,7 +466,7 @@ export default function Traceability() {
   };
 
   const exportToPDF = (lot) => {
-   window.open(`http://127.0.0.1:8000/traceability/lots/${lot.numero_lot}/pdf`);
+  window.open(`http://127.0.0.1:8000/api/traceability/lots/${lot.numero_lot}/pdf`);
   };
 
   const toggleStepDetails = (stepId) => {
@@ -1083,6 +1083,6 @@ export default function Traceability() {
         onClose={() => setIsCreateModalOpen(false)}
         onLotCreated={handleLotCreated}
       />
-    </div>
+    </div> 
   );
 }
