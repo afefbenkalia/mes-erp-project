@@ -4,6 +4,7 @@ from app.database import Base, engine
 from app.core.ensure_schema import (
     ensure_productions_of_id_column,
     ensure_users_hashed_password_column,
+    ensure_users_activity_columns,
 )
 
 # Import des routers
@@ -41,6 +42,7 @@ app.add_middleware(
 # Création des tables
 Base.metadata.create_all(bind=engine)
 ensure_users_hashed_password_column()
+ensure_users_activity_columns()
 ensure_productions_of_id_column()
 
 # Routers - IMPORTANT: Le préfixe est "/auth" une seule fois

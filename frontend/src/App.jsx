@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import Login from "./pages/Login";
+import ChangePassword from "./pages/ChangePassword";
 import MESDashboard from "./components/MESDashboard";
 import ProtectedRoute from "./routes/ProtectedRoute";
 
@@ -9,10 +10,11 @@ function App() {
     <BrowserRouter>
       <Toaster position="top-right" />
       <Routes>
-        {/* Routes publiques */}
+        {/* Public Routes */}
         <Route path="/login" element={<Login />} />
+        <Route path="/change-password" element={<ChangePassword />} />
         
-        {/* Routes protégées */}
+        {/* Protected Routes */}
         <Route
           path="/dashboard"
           element={
@@ -22,10 +24,10 @@ function App() {
           }
         />
         
-        {/* Redirection par défaut */}
+        {/* Default Redirect */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         
-        {/* Route 404 - Optionnelle */}
+        {/* 404 Route */}
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </BrowserRouter>

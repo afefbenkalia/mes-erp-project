@@ -7,12 +7,15 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    cin = Column(String, unique=True, nullable=False, index=True)
+    nom = Column(String, nullable=False)
+    prenom = Column(String, nullable=False)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, nullable=False, default="operator")
-    phone = Column(String, nullable=True)
-    status = Column(String, default="active")
     is_active = Column(Boolean, default=True)
+    is_first_login = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+    login_count = Column(Integer, nullable=False, default=0)
     last_access = Column(DateTime, nullable=True)

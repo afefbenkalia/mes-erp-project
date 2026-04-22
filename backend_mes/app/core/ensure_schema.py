@@ -21,6 +21,35 @@ def ensure_users_hashed_password_column() -> None:
             conn.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR"))
 
 
+def ensure_users_activity_columns() -> None:
+    with engine.begin() as conn:
+        row_last_login = conn.execute(
+            text(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'users'
+                  AND column_name = 'last_login'
+                """
+            )
+        ).first()
+        if row_last_login is None:
+            conn.execute(text("ALTER TABLE users ADD COLUMN last_login TIMESTAMP"))
+
+        row_login_count = conn.execute(
+            text(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'users'
+                  AND column_name = 'login_count'
+                """
+            )
+        ).first()
+        if row_login_count is None:
+            conn.execute(text("ALTER TABLE users ADD COLUMN login_count INTEGER DEFAULT 0 NOT NULL"))
+
+
 def ensure_productions_of_id_column() -> None:
     """ORM expects productions.of_id; older DBs may lack it after model changes."""
     with engine.begin() as conn:

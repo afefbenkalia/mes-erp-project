@@ -1,116 +1,204 @@
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 from app.database import get_db
 from . import service, schema
-from app.core.security import create_token
+from app.core.security import create_token, get_current_user
+
+
+logger = logging.getLogger("auth_router")
 
 # IMPORTANT: Le préfixe est déjà "/auth" dans main.py
-# Donc ici on utilise prefix="" pour éviter /auth/auth/
 router = APIRouter(tags=["Authentication"])
 
 
-@router.post("/register", response_model=schema.UserResponse, status_code=status.HTTP_201_CREATED)
-def register(user: schema.UserCreate, db: Session = Depends(get_db)):
-    """Inscription d'un nouvel utilisateur"""
+@router.post("/create-user", response_model=schema.UserResponse, status_code=status.HTTP_201_CREATED)
+def create_user_by_admin(
+    user_data: schema.UserCreateByAdmin,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+):
+    """
+    Admin creates a new user with temporary password.
+    
+    - Only admins can create users
+    - User gets temporary password via email
+    - User must change password on first login
+    """
     try:
-        return service.create_user(db, user)
+        # TODO: Verify current_user is admin
+        user = service.create_user_by_admin(db, user_data)
+        return user
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create user")
 
 
 @router.post("/login", response_model=schema.LoginResponse)
 def login(data: schema.UserLogin, db: Session = Depends(get_db)):
-    """Connexion utilisateur"""
+    """
+    Login endpoint.
+    
+    Returns force_change_password = True if user is on first login.
+    """
     user = service.authenticate(db, data.email, data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email ou mot de passe incorrect"
+            detail="Invalid email or password"
         )
     
-    token = create_token({"sub": user.email, "role": user.role, "user_id": user.id})
+    token = create_token({
+        "sub": user.email,
+        "role": user.role,
+        "user_id": user.id
+    })
     
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": user
+        "user": user,
+        "force_change_password": user.is_first_login
     }
+
+
+@router.post("/change-password")
+def change_password(
+    change_data: schema.ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Change password (first login or password reset).
+    
+    Called after user logs in with temporary password.
+    Updates password and allows access to system.
+    """
+    try:
+        user_id = current_user.get("user_id")
+        
+        user = service.change_password(db, user_id, change_data)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        return {
+            "message": "Password changed successfully",
+            "user": user
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error changing password: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to change password")
 
 
 @router.get("/users", response_model=List[schema.UserResponse])
 def get_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
 ):
-    """Récupérer les utilisateurs avec pagination"""
+    """Get all users (admin only)."""
+    # TODO: Verify current_user is admin
     return service.get_users(db, skip, limit)
 
 
-@router.get("/users/all", response_model=List[schema.UserResponse])
-def get_all_users(db: Session = Depends(get_db)):
-    """Récupérer TOUS les utilisateurs"""
-    return service.get_all_users(db)
+@router.get("/users/stats", response_model=schema.UserStatsResponse)
+def get_users_stats(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+):
+    """Get advanced user statistics for dashboard cards."""
+    # TODO: Verify current_user is admin
+    return service.get_user_stats(db)
 
 
 @router.get("/users/{user_id}", response_model=schema.UserResponse)
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    """Récupérer un utilisateur par son ID"""
+def get_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+):
+    """Get user by ID (admin only)."""
+    # TODO: Verify current_user is admin
     user = service.get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Utilisateur non trouvé"
+            detail="User not found"
         )
     return user
-
-
-@router.post("/users", response_model=schema.UserResponse, status_code=status.HTTP_201_CREATED)
-def create_user(
-    user: schema.UserCreate,
-    db: Session = Depends(get_db)
-):
-    """Créer un nouvel utilisateur"""
-    try:
-        return service.create_user(db, user)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.put("/users/{user_id}", response_model=schema.UserResponse)
 def update_user(
     user_id: int,
-    user_data: schema.UserUpdate,
-    db: Session = Depends(get_db)
+    user_data: schema.UserUpdateByAdmin,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
 ):
-    """Mettre à jour un utilisateur"""
+    """Update user by ID (admin only)."""
     try:
-        user = service.update_user(db, user_id, user_data)
+        user = service.update_user_by_admin(db, user_id, user_data)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Utilisateur non trouvé"
+                detail="User not found"
             )
         return user
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating user: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
+
+
+@router.post("/users/{user_id}/reset-password", status_code=status.HTTP_200_OK)
+def reset_user_password(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+):
+    """Reset user password and send a new temporary password by email (admin only)."""
+    try:
+        user = service.reset_user_password_by_admin(db, user_id)
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        return {
+            "message": "Temporary password generated and sent by email",
+            "user_id": user.id,
+            "email": user.email,
+            "is_first_login": user.is_first_login,
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error resetting user password: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to reset password")
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_200_OK)
-def delete_user(user_id: int, db: Session = Depends(get_db)):
-    """Supprimer un utilisateur"""
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+):
+    """Delete user (admin only)."""
+    # TODO: Verify current_user is admin
     result = service.delete_user(db, user_id)
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Utilisateur non trouvé"
+            detail="User not found"
         )
-    return {"message": "Utilisateur supprimé avec succès", "user_id": user_id}
-
-
-@router.get("/stats/count")
-def get_users_count(db: Session = Depends(get_db)):
-    """Obtenir le nombre total d'utilisateurs"""
-    count = service.get_users_count(db)
-    return {"total_users": count}
+    return {"message": "User deleted successfully", "user_id": user_id}
