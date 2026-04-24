@@ -1,5 +1,6 @@
 import smtplib
 import logging
+import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
@@ -7,6 +8,98 @@ from typing import Optional
 
 
 logger = logging.getLogger("email_service")
+
+
+def send_maintenance_notification_email(
+    email: str, payload: dict, retry_count: int = 0
+) -> bool:
+    """
+    Send real-time maintenance notification email for machine error events.
+
+    Args:
+        email: Recipient email (maintenance responsible user)
+        payload: Notification payload sent to UI websocket clients
+        retry_count: Current retry attempt
+
+    Returns:
+        True if email sent successfully, False otherwise
+    """
+    max_retries = 3
+
+    if not settings.SMTP_ENABLED:
+        logger.warning(f"Email service is disabled. Skipping maintenance alert email for {email}")
+        return True
+
+    machine_ref = payload.get("machine_reference", "N/A")
+    state = payload.get("state", "N/A")
+    message = payload.get("message", "Alerte maintenance")
+    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+
+    try:
+        html_content = f"""
+        <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; background-color: #f4f4f4; }}
+                    .container {{ max-width: 640px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; }}
+                    .header {{ background: #b91c1c; color: white; padding: 16px; border-radius: 8px 8px 0 0; }}
+                    .content {{ padding: 20px; color: #111827; }}
+                    .badge {{ display: inline-block; padding: 6px 10px; border-radius: 999px; background: #fee2e2; color: #991b1b; font-weight: bold; }}
+                    .payload {{ white-space: pre-wrap; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; }}
+                    .footer {{ margin-top: 20px; color: #6b7280; font-size: 12px; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <div class="header">
+                        <h2 style="margin:0;">Alerte maintenance en temps reel</h2>
+                    </div>
+                    <div class="content">
+                        <p><strong>Machine:</strong> {machine_ref}</p>
+                        <p><strong>Etat:</strong> <span class="badge">{state}</span></p>
+                        <p><strong>Message:</strong> {message}</p>
+                        <p><strong>Payload websocket (identique):</strong></p>
+                        <div class="payload">{payload_json}</div>
+                        <div class="footer">
+                            Cet email a ete genere automatiquement par MES.
+                        </div>
+                    </div>
+                </div>
+            </body>
+        </html>
+        """
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"[MES] Alerte maintenance - {machine_ref} en {state}"
+        msg["From"] = settings.SMTP_FROM
+        msg["To"] = email
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
+            server.starttls()
+            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+            server.send_message(msg)
+
+        logger.info(f"Maintenance alert email sent successfully to {email}")
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP authentication failed for maintenance alert email: {e}")
+        if retry_count < max_retries:
+            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
+            return send_maintenance_notification_email(email, payload, retry_count + 1)
+        return False
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error sending maintenance alert email to {email}: {e}")
+        if retry_count < max_retries:
+            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
+            return send_maintenance_notification_email(email, payload, retry_count + 1)
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error sending maintenance alert email to {email}: {e}")
+        if retry_count < max_retries:
+            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
+            return send_maintenance_notification_email(email, payload, retry_count + 1)
+        return False
 
 
 def send_welcome_email(email: str, temporary_password: str, nom: str, prenom: str, retry_count: int = 0) -> bool:

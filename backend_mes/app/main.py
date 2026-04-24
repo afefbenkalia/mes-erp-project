@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import Base, engine
+from app.database import Base, SessionLocal, engine
 from app.core.ensure_schema import (
+    ensure_preventive_maintenance_columns,
     ensure_productions_of_id_column,
     ensure_users_hashed_password_column,
     ensure_users_activity_columns,
 )
+from app.core.config import settings
 
 # Import des routers
 from app.modules.production.router import router as production_router
@@ -13,8 +15,10 @@ from app.modules.dashboard.router import router as dashboard_router
 from app.modules.orders.router import router as orders_router
 from app.modules.traceability.router import router as traceability_router
 from app.modules.machines.router import router as machine_router
+from app.modules.machines.service import normalize_legacy_machine_states
+from app.modules.maintenance.router import router as maintenance_router
 from app.modules.auth.router import router as auth_router
-
+print("DATABASE_URL =", settings.DATABASE_URL)
 app = FastAPI(
     title="MES ERP Backend",
     description="API Backend pour la gestion MES et ERP",
@@ -40,10 +44,18 @@ app.add_middleware(
 )
 
 # Création des tables
-Base.metadata.create_all(bind=engine)
+@app.on_event("startup")
+def startup():
+    Base.metadata.create_all(bind=engine)
+    db = SessionLocal()
+    try:
+        normalize_legacy_machine_states(db)
+    finally:
+        db.close()
 ensure_users_hashed_password_column()
 ensure_users_activity_columns()
 ensure_productions_of_id_column()
+ensure_preventive_maintenance_columns()
 
 # Routers - IMPORTANT: Le préfixe est "/auth" une seule fois
 app.include_router(auth_router, prefix="/auth")
@@ -52,6 +64,7 @@ app.include_router(production_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
 app.include_router(traceability_router, prefix="/api")
 app.include_router(machine_router, prefix="/api")
+app.include_router(maintenance_router, prefix="/api")
 @app.get("/")
 def root():
     return {"message": "Backend MES ERP fonctionne !"}

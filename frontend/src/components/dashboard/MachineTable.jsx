@@ -2,17 +2,17 @@ import React from "react";
 import { PencilIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 const STATE_STYLE = {
-  running: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80",
-  stopped: "bg-red-50 text-red-800 ring-1 ring-red-200/80",
-  maintenance: "bg-orange-50 text-orange-800 ring-1 ring-orange-200/80",
-  error: "bg-rose-100 text-rose-900 ring-1 ring-rose-300/80",
+  MARCHE: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80",
+  PAUSE: "bg-red-50 text-red-800 ring-1 ring-red-200/80",
+  MAINTENANCE: "bg-orange-50 text-orange-800 ring-1 ring-orange-200/80",
+  ERREUR: "bg-rose-100 text-rose-900 ring-1 ring-rose-300/80",
 };
 
 const STATE_LABEL = {
-  running: "RUNNING",
-  stopped: "STOPPED",
-  maintenance: "MAINTENANCE",
-  error: "ERROR",
+  MARCHE: "MARCHE",
+  PAUSE: "PAUSE",
+  MAINTENANCE: "MAINTENANCE",
+  ERREUR: "ERREUR",
 };
 
 const formatDurationMinutes = (minutesTotal) => {
@@ -94,7 +94,7 @@ const MachineTable = ({
             ) : (
               machines.map((machine) => {
                 const rt = getRealtimeForMachine(machine);
-                const state = (rt?.state || "").toLowerCase();
+                const state = String(machine?.state || machine?.current_state || "").trim().toUpperCase();
                 return (
                   <tr key={machine.id} className="transition hover:bg-slate-50/80">
                     <td className="px-4 py-3 font-medium text-slate-900">{machine.name}</td>
@@ -103,13 +103,13 @@ const MachineTable = ({
                       {machine.machine_type || "No Data"}
                     </td>
                     <td className="px-4 py-3">
-                      {rt ? (
+                      {state ? (
                         <span
                           className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
                             STATE_STYLE[state] || "bg-slate-100 text-slate-700 ring-1 ring-slate-200/80"
                           }`}
                         >
-                          {STATE_LABEL[state] || String(rt.state).toUpperCase()}
+                          {STATE_LABEL[state] || state}
                         </span>
                       ) : (
                         <span className="text-slate-500">No Data</span>

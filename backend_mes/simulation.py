@@ -38,18 +38,19 @@ GLOBAL_TOPIC = "mes/metrics/global"
 MACHINE_TOPIC_TEMPLATE = "mes/machines/{id}/data"
 
 MACHINE_IDS = ["M1", "M2", "M3", "M4"]
-STATE_CHOICES = ["running", "stopped", "maintenance", "error"]
-NON_RUNNING_STATES = {"stopped", "maintenance", "error"}
+STATE_CHOICES = ["MARCHE", "PAUSE", "ERREUR"]
+NON_RUNNING_STATES = {"PAUSE", "ERREUR"}
 
 PUBLISH_INTERVAL_SECONDS = 2
 STATE_CHANGE_WINDOW_SECONDS = (10, 30)
 DEFAULT_MACHINES_API_URL = "http://127.0.0.1:8000/api/machines"
+DEFAULT_MAINTENANCE_ERROR_URL = "http://127.0.0.1:8000/api/maintenance/simulation/error"
 
 
 @dataclass
 class MachineSim:
     machine_id: str
-    state: str = "running"
+    state: str = "MARCHE"
     runtime_minutes: float = 0.0
     downtime_minutes: float = 0.0
     production: int = 0
@@ -75,13 +76,12 @@ class MachineSim:
 
         # Bonus: occasional forced failure.
         if random.random() < 0.12:
-            next_state = "error"
+            next_state = "ERREUR"
         else:
             weighted_states = [
-                ("running", 0.68),
-                ("stopped", 0.18),
-                ("maintenance", 0.09),
-                ("error", 0.05),
+                ("MARCHE", 0.68),
+                ("PAUSE", 0.24),
+                ("ERREUR", 0.08),
             ]
             r = random.random()
             cumulative = 0.0
@@ -99,7 +99,7 @@ class MachineSim:
             )
             self.state = next_state
 
-            if self.state == "running" and random.random() < 0.35:
+            if self.state == "MARCHE" and random.random() < 0.35:
                 # New order id when resuming production.
                 self.current_of = f"OF-{random.randint(1001, 9999)}"
 
@@ -110,24 +110,21 @@ class MachineSim:
         self.maybe_change_state()
 
         delta_minutes = interval_seconds / 60.0
-        if self.state == "running":
+        if self.state == "MARCHE":
             self.runtime_minutes += delta_minutes
         else:
             self.downtime_minutes += delta_minutes
 
-        if self.state == "running":
+        if self.state == "MARCHE":
             produced_now = random.randint(6, 18)
             self.production += produced_now
             self.rejects += random.randint(0, 2)
             self.speed = random.randint(800, 1500)
             self.temperature = round(random.uniform(70.0, 90.0), 1)
-        elif self.state == "stopped":
+        elif self.state == "PAUSE":
             self.speed = 0
             self.temperature = round(random.uniform(30.0, 50.0), 1)
-        elif self.state == "maintenance":
-            self.speed = random.randint(0, 200)
-            self.temperature = round(random.uniform(35.0, 60.0), 1)
-        else:  # error
+        else:  # ERREUR
             self.speed = 0
             self.temperature = round(random.uniform(60.0, 95.0), 1)
 
@@ -221,7 +218,22 @@ def load_machine_identifiers(api_url: str, limit: int = 4) -> List[str]:
         return MACHINE_IDS[:limit]
     
 
-def run_simulation(api_url: str) -> None:
+def notify_backend_error(maintenance_error_url: str, machine_reference: str) -> None:
+    payload = json.dumps({"machine_reference": machine_reference}).encode("utf-8")
+    req = urllib.request.Request(
+        maintenance_error_url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=4):
+            pass
+    except Exception as error:
+        print(f"Could not notify backend for machine {machine_reference}: {error}")
+
+
+def run_simulation(api_url: str, maintenance_error_url: str) -> None:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mes-simulator")
     client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
     client.loop_start()
@@ -261,6 +273,7 @@ def run_simulation(api_url: str) -> None:
 
         # 🔁 simulation normale
         for machine in machines.values():
+            previous_state = machine.state
             machine.tick(PUBLISH_INTERVAL_SECONDS)
             payload = machine.to_payload()
             topic = MACHINE_TOPIC_TEMPLATE.format(id=machine.machine_id)
@@ -274,6 +287,12 @@ def run_simulation(api_url: str) -> None:
                 f"downtime={payload['downtime_minutes']}m prod={payload['production']} "
                 f"rej={payload['rejects']} temp={payload['temperature']}C{temp_warn}"
             )
+
+            if previous_state != "ERREUR" and machine.state == "ERREUR":
+                notify_backend_error(
+                    maintenance_error_url=maintenance_error_url,
+                    machine_reference=machine.machine_id,
+                )
 
         # 🌍 global metrics
         global_payload = compute_global_metrics(machines)
@@ -303,12 +322,20 @@ def main() -> None:
         default=DEFAULT_MACHINES_API_URL,
         help=f"Machines API URL used to fetch references (default: {DEFAULT_MACHINES_API_URL})",
     )
+    parser.add_argument(
+        "--maintenance-error-url",
+        default=DEFAULT_MAINTENANCE_ERROR_URL,
+        help=f"Maintenance error URL (default: {DEFAULT_MAINTENANCE_ERROR_URL})",
+    )
     args = parser.parse_args()
 
     if not args.start:
         print("Simulation is disabled. Use --start to run.")
         return
-    run_simulation(api_url=args.machines_api_url)
+    run_simulation(
+        api_url=args.machines_api_url,
+        maintenance_error_url=args.maintenance_error_url,
+    )
 
 
 if __name__ == "__main__":

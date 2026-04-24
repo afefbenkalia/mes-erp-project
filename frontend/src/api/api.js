@@ -84,4 +84,22 @@ export const dashboardAPI = {
   getProductionSummary: () => API.get("/api/dashboard/summary"),
 };
 
+export const maintenanceAPI = {
+  getMachines: () => API.get("/api/maintenance/machines"),
+  getInterventions: () => API.get("/api/maintenance/interventions"),
+  getHistory: () => API.get("/api/maintenance/history"),
+  getPreventive: () => API.get("/api/maintenance/preventive"),
+  takeOver: (machineId, data = {}) =>
+    API.post(`/api/maintenance/machines/${machineId}/take-over`, data),
+  markRepaired: (machineId, data) =>
+    API.post(`/api/maintenance/machines/${machineId}/mark-repaired`, data),
+  simulateError: (machineId) =>
+    API.post(`/api/maintenance/machines/${machineId}/simulate-error`),
+  createPreventive: (data) => API.post("/api/maintenance/preventive", data),
+  updatePreventive: (preventiveId, data) =>
+    API.patch(`/api/maintenance/preventive/${preventiveId}`, data),
+  deletePreventive: (preventiveId) =>
+    API.delete(`/api/maintenance/preventive/${preventiveId}`),
+};
+
 export default API;

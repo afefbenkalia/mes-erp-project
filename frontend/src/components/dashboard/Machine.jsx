@@ -29,12 +29,13 @@ import KpiCard from "./DashboardMes/KpiCard";
 import MachineTable from "./MachineTable";
 import EditMachineModal from "./EditMachineModal";
 import { subscribeMachineRealtime } from "../../services/mqttService";
+import { subscribeMaintenanceEvents } from "../../services/maintenanceSocket";
 
 const STATE_COLORS = {
-  running: "#10b981",
-  stopped: "#ef4444",
-  maintenance: "#f59e0b",
-  error: "#7f1d1d",
+  MARCHE: "#10b981",
+  PAUSE: "#ef4444",
+  MAINTENANCE: "#f59e0b",
+  ERREUR: "#7f1d1d",
 };
 
 const PIE_COLORS = ["#10b981", "#ef4444", "#f59e0b", "#7f1d1d"];
@@ -48,6 +49,8 @@ const Machine = () => {
   const [mqttConnectionStatus, setMqttConnectionStatus] = useState("disconnected");
   const [realtimeByMachineId, setRealtimeByMachineId] = useState({});
   const [performanceTrend, setPerformanceTrend] = useState([]);
+
+  const normalizeState = (value) => String(value ?? "").trim().toUpperCase();
 
   const [form, setForm] = useState({
     name: "",
@@ -65,15 +68,15 @@ const Machine = () => {
     let failedMachines = 0;
 
     realtimeMachines.forEach((machine) => {
-      const state = String(machine?.state || "").toLowerCase();
+      const state = String(machine?.state || "").trim().toUpperCase();
       const runtime = Number(machine?.runtime_minutes);
       const downtime = Number(machine?.downtime_minutes);
 
       if (Number.isFinite(runtime) && runtime > 0) totalRuntime += runtime;
       if (Number.isFinite(downtime) && downtime > 0) totalDowntime += downtime;
 
-      if (state === "running") activeMachines += 1;
-      if (state === "error" || state === "stopped") failedMachines += 1;
+      if (state === "MARCHE") activeMachines += 1;
+      if (state === "ERREUR" || state === "PAUSE") failedMachines += 1;
     });
 
     const totalTime = totalRuntime + totalDowntime;
@@ -105,9 +108,17 @@ const Machine = () => {
         res.data.map(async (m) => {
           try {
             const history = await machineAPI.getStateHistory(m.id);
-            return { ...m, state_history: history.data };
+            return {
+              ...m,
+              state: normalizeState(m.current_state || m.state || "MARCHE"),
+              state_history: history.data,
+            };
           } catch {
-            return { ...m, state_history: [] };
+            return {
+              ...m,
+              state: normalizeState(m.current_state || m.state || "MARCHE"),
+              state_history: [],
+            };
           }
         })
       );
@@ -159,6 +170,32 @@ const Machine = () => {
 
     return unsubscribe;
   }, [getRealtimeStatsFromMap]);
+
+  useEffect(() => {
+    const unsubscribeMaintenance = subscribeMaintenanceEvents({
+      onMessage: (message) => {
+        if (!message || message.event !== "machine_update" || !message.payload) return;
+        const payload = message.payload;
+        setMachines((prev) =>
+          prev.map((machine) => {
+            const sameId = Number(machine.id) === Number(payload.machine_id);
+            const sameRef =
+              String(machine.reference || "").trim() ===
+              String(payload.machine_reference || "").trim();
+            if (!sameId && !sameRef) return machine;
+            return {
+              ...machine,
+              state: normalizeState(payload.state || machine.state),
+              current_state: normalizeState(payload.state || machine.current_state),
+              current_state_started_at: payload.last_update || machine.current_state_started_at,
+            };
+          })
+        );
+      },
+    });
+
+    return unsubscribeMaintenance;
+  }, []);
 
   const handleAddMachine = async () => {
     if (!form.name || !form.reference) {
@@ -249,28 +286,29 @@ const Machine = () => {
   };
 
   const getGlobalStats = () => {
-    return getRealtimeStatsFromMap(realtimeByMachineId);
+    const realtimeStats = getRealtimeStatsFromMap(realtimeByMachineId);
+    const states = machines.map((m) => normalizeState(m.state));
+    const activeMachines = states.filter((s) => s === "MARCHE").length;
+    const failedMachines = states.filter((s) => s === "ERREUR" || s === "PAUSE").length;
+    return {
+      ...realtimeStats,
+      activeMachines,
+      failedMachines,
+      totalMachines: machines.length,
+    };
   };
 
   const getStateDistributionData = () => {
-    const realtimeMachines = Object.values(realtimeByMachineId);
-    const running = realtimeMachines.filter(
-      (m) => String(m?.state || "").toLowerCase() === "running"
-    ).length;
-    const stopped = realtimeMachines.filter(
-      (m) => String(m?.state || "").toLowerCase() === "stopped"
-    ).length;
-    const maintenance = realtimeMachines.filter(
-      (m) => String(m?.state || "").toLowerCase() === "maintenance"
-    ).length;
-    const error = realtimeMachines.filter(
-      (m) => String(m?.state || "").toLowerCase() === "error"
-    ).length;
+    const states = machines.map((m) => normalizeState(m.state));
+    const marche = states.filter((s) => s === "MARCHE").length;
+    const pause = states.filter((s) => s === "PAUSE").length;
+    const maintenance = states.filter((s) => s === "MAINTENANCE").length;
+    const erreur = states.filter((s) => s === "ERREUR").length;
     return [
-      { name: "En marche", value: running },
-      { name: "Arrêté", value: stopped },
+      { name: "En marche", value: marche },
+      { name: "Pause", value: pause },
       { name: "Maintenance", value: maintenance },
-      { name: "Erreur", value: error },
+      { name: "Erreur", value: erreur },
     ];
   };
 
@@ -496,8 +534,8 @@ const Machine = () => {
                       key={entry.name}
                       fill={
                         entry.name === "Runtime"
-                          ? STATE_COLORS.running
-                          : STATE_COLORS.stopped
+                          ? STATE_COLORS.MARCHE
+                          : STATE_COLORS.PAUSE
                       }
                     />
                   ))}

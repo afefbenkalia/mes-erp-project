@@ -135,7 +135,7 @@ def list_state_history(
     machine_id: int,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
-    state: Optional[str] = Query(None, pattern="^(running|stopped|failure)$"),
+    state: Optional[str] = Query(None, pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$"),
     db: Session = Depends(get_db),
 ):
     """Liste l'historique des états d'une machine."""
@@ -169,7 +169,7 @@ def change_machine_state(
 ):
     """
     Change l'état de la machine : clôture l'état actuel et enregistre le nouveau.
-    État : running | stopped | failure
+    État : MARCHE | PAUSE | ERREUR | MAINTENANCE
     """
     machine = get_machine_by_id(db, machine_id)
     if not machine:

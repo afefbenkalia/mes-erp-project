@@ -6,9 +6,19 @@ from sqlalchemy.orm import Session
 from sqlalchemy import desc
 
 from app.core.datetime_utc import utc_now_naive
+from app.modules.maintenance.model import MachineOperationalState, MachineOperationalStatus
 
 from .model import Machine, MachineStateHistory
 from .schema import MachineCreate, MachineUpdate, StateHistoryCreate, StateHistoryUpdate
+
+_LEGACY_STATE_MAP = {
+    "running": MachineOperationalState.MARCHE,
+    "stopped": MachineOperationalState.PAUSE,
+    "pause": MachineOperationalState.PAUSE,
+    "error": MachineOperationalState.ERREUR,
+    "failure": MachineOperationalState.ERREUR,
+    "maintenance": MachineOperationalState.MAINTENANCE,
+}
 
 
 # ---------- Machines ----------
@@ -51,6 +61,15 @@ def create_machine(db: Session, data: MachineCreate) -> Machine:
     db.add(machine)
     db.commit()
     db.refresh(machine)
+
+    # Keep maintenance and machine modules aligned from creation time.
+    status = MachineOperationalStatus(
+        machine_id=machine.id,
+        state=MachineOperationalState.MARCHE,
+        last_update=utc_now_naive(),
+    )
+    db.add(status)
+    db.commit()
     return machine
 
 
@@ -70,18 +89,61 @@ def delete_machine(db: Session, machine: Machine) -> None:
     db.commit()
 
 
+def normalize_legacy_machine_states(db: Session) -> int:
+    """
+    One-time normalization to enforce uppercase machine states in DB.
+    Returns number of updated rows.
+    """
+    updated = 0
+
+    statuses = db.query(MachineOperationalStatus).all()
+    for status in statuses:
+        normalized = _LEGACY_STATE_MAP.get(str(status.state or "").strip().lower())
+        if normalized and status.state != normalized:
+            status.state = normalized
+            updated += 1
+
+    history_rows = db.query(MachineStateHistory).all()
+    for row in history_rows:
+        normalized = _LEGACY_STATE_MAP.get(str(row.state or "").strip().lower())
+        if normalized and row.state != normalized:
+            row.state = normalized
+            updated += 1
+
+    if updated:
+        db.commit()
+    return updated
+
+
 # ---------- État actuel ----------
 
-def get_current_state(db: Session, machine_id: int) -> Optional[MachineStateHistory]:
-    """Retourne l'état actuel de la machine (dernier état sans ended_at)."""
-    return (
-        db.query(MachineStateHistory)
-        .filter(
-            MachineStateHistory.machine_id == machine_id,
-            MachineStateHistory.ended_at.is_(None),
-        )
-        .order_by(desc(MachineStateHistory.started_at))
+def _ensure_operational_status(db: Session, machine_id: int) -> MachineOperationalStatus:
+    status = (
+        db.query(MachineOperationalStatus)
+        .filter(MachineOperationalStatus.machine_id == machine_id)
         .first()
+    )
+    if status:
+        return status
+
+    status = MachineOperationalStatus(
+        machine_id=machine_id,
+        state=MachineOperationalState.MARCHE,
+        last_update=utc_now_naive(),
+    )
+    db.add(status)
+    db.commit()
+    db.refresh(status)
+    return status
+
+def get_current_state(db: Session, machine_id: int) -> Optional[MachineStateHistory]:
+    """Retourne l'état actuel depuis la source partagée maintenance."""
+    status = _ensure_operational_status(db, machine_id)
+    return MachineStateHistory(
+        machine_id=machine_id,
+        state=status.state,
+        started_at=status.last_update,
+        ended_at=None,
     )
 
 
@@ -106,7 +168,7 @@ def add_state_history(
     machine_id: int,
     data: StateHistoryCreate,
 ) -> MachineStateHistory:
-    """Ajoute une entrée à l'historique des états."""
+    """Ajoute une entrée à l'historique des états et synchronise l'état courant."""
     started = data.started_at or utc_now_naive()
     entry = MachineStateHistory(
         machine_id=machine_id,
@@ -115,6 +177,10 @@ def add_state_history(
         ended_at=data.ended_at,
         comment=data.comment,
     )
+    if entry.ended_at is None:
+        status = _ensure_operational_status(db, machine_id)
+        status.state = data.state
+        status.last_update = started
     db.add(entry)
     db.commit()
     db.refresh(entry)
@@ -126,13 +192,25 @@ def close_current_state(
     machine_id: int,
     ended_at: Optional[datetime] = None,
 ) -> Optional[MachineStateHistory]:
-    """Clôture l'état actuel (met ended_at) et retourne l'entrée modifiée."""
-    current = get_current_state(db, machine_id)
-    if not current:
-        return None
-    current.ended_at = ended_at or utc_now_naive()
+    """Clôture l'état historique en cours et met la machine en PAUSE."""
+    current = (
+        db.query(MachineStateHistory)
+        .filter(
+            MachineStateHistory.machine_id == machine_id,
+            MachineStateHistory.ended_at.is_(None),
+        )
+        .order_by(desc(MachineStateHistory.started_at))
+        .first()
+    )
+    now = ended_at or utc_now_naive()
+    if current:
+        current.ended_at = now
+    status = _ensure_operational_status(db, machine_id)
+    status.state = MachineOperationalState.PAUSE
+    status.last_update = now
     db.commit()
-    db.refresh(current)
+    if current:
+        db.refresh(current)
     return current
 
 
@@ -148,6 +226,10 @@ def update_state_history(
     update_data = data.model_dump(exclude_unset=True)
     for k, v in update_data.items():
         setattr(entry, k, v)
+    if entry.ended_at is None:
+        status = _ensure_operational_status(db, entry.machine_id)
+        status.state = entry.state
+        status.last_update = entry.started_at
     db.commit()
     db.refresh(entry)
     return entry
@@ -165,7 +247,17 @@ def change_state(
     2. Crée une nouvelle entrée avec le nouvel état
     """
     now = utc_now_naive()
-    close_current_state(db, machine_id, ended_at=now)
+    current = (
+        db.query(MachineStateHistory)
+        .filter(
+            MachineStateHistory.machine_id == machine_id,
+            MachineStateHistory.ended_at.is_(None),
+        )
+        .order_by(desc(MachineStateHistory.started_at))
+        .first()
+    )
+    if current:
+        current.ended_at = now
     return add_state_history(
         db,
         machine_id,

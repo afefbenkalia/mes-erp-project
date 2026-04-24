@@ -4,7 +4,8 @@ import {
   Cpu,
   ClipboardList,
   Search,
-  LogOut
+  LogOut,
+  Wrench
 } from "lucide-react";
 
 import Production from "./dashboard/Production";
@@ -13,25 +14,59 @@ import Traceability from "./dashboard/Traceability";
 import UserManagement from "./UserManagement";
 import Machine from "./dashboard/Machine";
 import ProductionDashboard from "./dashboard/DashboardMes/ProductionDashboard";
+import MaintenanceDashboard from "./maintenance/MaintenanceDashboard";
+
+const ROLE_CONFIG = {
+  admin: {
+    defaultModule: "users",
+    modules: ["users"],
+  },
+  manager: {
+    defaultModule: "dashboard",
+    modules: ["dashboard", "production", "ordres", "traceability", "machine"],
+  },
+  maintenance: {
+    defaultModule: "maintenance",
+    modules: ["maintenance"],
+  },
+  operateur: {
+    defaultModule: "production",
+    modules: ["production", "machine"],
+  },
+};
+
+const ROLE_TO_CONFIG_KEY = {
+  responsable_maintenance: "maintenance",
+};
+
+const MODULE_CONFIG = {
+  dashboard: { label: "Dashboard", icon: <LayoutDashboard size={16} />, component: ProductionDashboard },
+  production: { label: "Production", icon: <Cpu size={16} />, component: Production },
+  ordres: { label: "Ordres Fabrication", icon: <ClipboardList size={16} />, component: OrdresFabrication },
+  traceability: { label: "Traceability", icon: <Search size={16} />, component: Traceability },
+  machine: { label: "Machine", icon: <Cpu size={16} />, component: Machine },
+  maintenance: { label: "Maintenance", icon: <Wrench size={16} />, component: MaintenanceDashboard },
+  users: { label: "User Management", icon: "👤", component: UserManagement },
+};
 
 const MESDashboard = () => {
   const [user, setUser] = useState(null);
-  const [activeModule, setActiveModule] = useState("dashboard");
-  
+  const [activeModule, setActiveModule] = useState("");
+
   useEffect(() => {
     const stored = JSON.parse(localStorage.getItem("user"));
 
     if (!stored) {
       window.location.href = "/login";
-    } else {
-      setUser(stored);
-
-      if (stored.role === "admin") {
-        setActiveModule("users");
-      } else if (stored.role === "manager" || stored.role === "responsable") {
-        setActiveModule("dashboard");
-      }
+      return;
     }
+
+    setUser(stored);
+    console.log("ROLE:", stored.role);
+
+    const configKey = ROLE_TO_CONFIG_KEY[stored.role] || stored.role;
+    const roleConfig = ROLE_CONFIG[configKey];
+    setActiveModule(roleConfig?.defaultModule || "dashboard");
   }, []);
 
   if (!user) return null;
@@ -43,44 +78,18 @@ const MESDashboard = () => {
     window.location.href = "/login";
   };
 
-  const isAdmin = role === "admin";
-  const isResponsable = role === "responsable" || role === "manager";
-
-  
-  const mesMenu = [
-    {
-      id: "dashboard",
-      label: "Dashboard",
-      icon: <LayoutDashboard size={16} />
-    },
-    {
-      id: "production",
-      label: "Production",
-      icon: <Cpu size={16} />
-    },
-    {
-      id: "ordres",
-      label: "Ordres Fabrication",
-      icon: <ClipboardList size={16} />
-    },
-    {
-      id: "traceability",
-      label: "Traceability",
-      icon: <Search size={16} />
-    },
-    {
-      id: "machine",
-      label: "Machine",
-      icon: <Cpu size={16} />
-    }
-  ];
+  const configKey = ROLE_TO_CONFIG_KEY[role] || role;
+  const roleConfig = ROLE_CONFIG[configKey];
+  const menu = (roleConfig?.modules || []).map((moduleId) => ({
+    id: moduleId,
+    label: MODULE_CONFIG[moduleId]?.label || moduleId,
+    icon: MODULE_CONFIG[moduleId]?.icon || null,
+  }));
 
   const renderContent = () => {
-    if (activeModule === "machine") {
-      return <Machine />;
-    }
-
     switch (activeModule) {
+      case "maintenance":
+        return <MaintenanceDashboard />;
       case "dashboard":
         return <ProductionDashboard />;
       case "production":
@@ -89,6 +98,8 @@ const MESDashboard = () => {
         return <OrdresFabrication />;
       case "traceability":
         return <Traceability />;
+      case "machine":
+        return <Machine />;
       case "users":
         return <UserManagement />;
       default:
@@ -101,42 +112,28 @@ const MESDashboard = () => {
       <aside style={styles.sidebar}>
         <h2>🏭 MES</h2>
 
-        {isResponsable && (
-          <>
-            <p style={styles.sectionTitle}>MES</p>
-            {mesMenu.map(item => (
-              <div
-                key={item.id}
-                onClick={() => setActiveModule(item.id)}
-                style={{
-                  ...styles.item,
-                  background: activeModule === item.id ? "#1e293b" : "transparent"
-                }}
-              >
-                {item.icon} {item.label}
-              </div>
-            ))}
-          </>
-        )}
+        <p style={styles.sectionTitle}>MENU</p>
 
-        {isAdmin && (
-          <>
-            <p style={styles.sectionTitle}>ADMIN</p>
-            <div
-              onClick={() => setActiveModule("users")}
-              style={{
-                ...styles.item,
-                background: activeModule === "users" ? "#1e293b" : "transparent"
-              }}
-            >
-              👤 User Management
-            </div>
-          </>
-        )}
+        {menu.map((item) => (
+          <div
+            key={item.id}
+            onClick={() => setActiveModule(item.id)}
+            style={{
+              ...styles.item,
+              background: activeModule === item.id ? "#1e293b" : "transparent"
+            }}
+          >
+            {item.icon} {item.label}
+          </div>
+        ))}
 
         <div
           onClick={handleLogout}
-          style={{ ...styles.item, background: "#dc2626", marginTop: "auto" }}
+          style={{
+            ...styles.item,
+            background: "#dc2626",
+            marginTop: "auto"
+          }}
         >
           <LogOut size={16} /> Logout
         </div>
@@ -144,29 +141,17 @@ const MESDashboard = () => {
 
       <div style={styles.main}>
         <header style={styles.header}>
-          <div style={styles.searchBox}>
-            <Search size={16} />
-            <input placeholder="Search..." style={styles.input} />
-          </div>
-          <div>
-            📅 {new Date().toLocaleDateString()} | 👤 {user.username} ({role})
-          </div>
+          📅 {new Date().toLocaleDateString()} | 👤 {user.username} ({role})
         </header>
 
-        <div style={styles.content}>
-          {renderContent()}
-        </div>
+        <div style={styles.content}>{renderContent()}</div>
       </div>
     </div>
   );
 };
 
 const styles = {
-  container: {
-    display: "flex",
-    height: "100vh",
-    fontFamily: "sans-serif"
-  },
+  container: { display: "flex", height: "100vh", fontFamily: "sans-serif" },
   sidebar: {
     width: "260px",
     background: "#0f172a",
@@ -199,22 +184,7 @@ const styles = {
   header: {
     background: "white",
     padding: "10px 20px",
-    display: "flex",
-    justifyContent: "space-between",
     borderBottom: "1px solid #e2e8f0"
-  },
-  searchBox: {
-    display: "flex",
-    alignItems: "center",
-    gap: "8px",
-    background: "#f1f5f9",
-    padding: "5px 10px",
-    borderRadius: "6px"
-  },
-  input: {
-    border: "none",
-    outline: "none",
-    background: "transparent"
   },
   content: {
     padding: "20px",

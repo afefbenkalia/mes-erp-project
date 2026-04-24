@@ -65,7 +65,7 @@ class MachineResponse(MachineInDB):
 class StateHistoryBase(BaseModel):
     """Schéma de base pour historique d'état."""
 
-    state: str = Field(..., pattern="^(running|stopped|failure)$")
+    state: str = Field(..., pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$")
     started_at: datetime
     ended_at: Optional[datetime] = None
     comment: Optional[str] = Field(None, max_length=500)
@@ -74,7 +74,7 @@ class StateHistoryBase(BaseModel):
 class StateHistoryCreate(BaseModel):
     """Schéma pour créer une entrée d'historique."""
 
-    state: str = Field(..., pattern="^(running|stopped|failure)$")
+    state: str = Field(..., pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$")
     started_at: Optional[datetime] = None  # default = now
     ended_at: Optional[datetime] = None
     comment: Optional[str] = Field(None, max_length=500)
@@ -111,7 +111,7 @@ class MachineCurrentState(BaseModel):
     """État actuel d'une machine."""
 
     machine_id: int
-    current_state: str  # running, stopped, failure
+    current_state: str  # MARCHE, PAUSE, ERREUR, MAINTENANCE
     started_at: datetime
     is_active: bool = True  # True si ended_at est None
 
@@ -123,5 +123,5 @@ class MachineCurrentState(BaseModel):
 class ChangeStateRequest(BaseModel):
     """Requête pour changer l'état d'une machine."""
 
-    state: str = Field(..., pattern="^(running|stopped|failure)$")
+    state: str = Field(..., pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$")
     comment: Optional[str] = Field(None, max_length=500)

@@ -87,3 +87,34 @@ def ensure_productions_of_id_column() -> None:
                     """
                 )
             )
+
+
+def ensure_preventive_maintenance_columns() -> None:
+    with engine.begin() as conn:
+        checks_and_ddls = [
+            (
+                "trigger_mode",
+                "ALTER TABLE preventive_maintenance ADD COLUMN trigger_mode VARCHAR(20) DEFAULT 'SCHEDULED' NOT NULL",
+            ),
+            (
+                "runtime_threshold_minutes",
+                "ALTER TABLE preventive_maintenance ADD COLUMN runtime_threshold_minutes INTEGER",
+            ),
+            (
+                "last_triggered_at",
+                "ALTER TABLE preventive_maintenance ADD COLUMN last_triggered_at TIMESTAMP",
+            ),
+        ]
+        for column_name, ddl in checks_and_ddls:
+            row = conn.execute(
+                text(
+                    f"""
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'preventive_maintenance'
+                      AND column_name = '{column_name}'
+                    """
+                )
+            ).first()
+            if row is None:
+                conn.execute(text(ddl))

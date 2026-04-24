@@ -13,9 +13,10 @@ except ImportError:
 
 class MachineStateEnum:
     """États possibles d'une machine."""
-    RUNNING = "running"      # En marche
-    STOPPED = "stopped"      # À l'arrêt
-    FAILURE = "failure"      # En panne
+    MARCHE = "MARCHE"
+    PAUSE = "PAUSE"
+    ERREUR = "ERREUR"
+    MAINTENANCE = "MAINTENANCE"
 
 
 class Machine(Base):
@@ -45,14 +46,14 @@ class Machine(Base):
 
 
 class MachineStateHistory(Base):
-    """Historique des états d'une machine (marche, arrêt, panne)."""
+    """Historique des états d'une machine (MARCHE, PAUSE, ERREUR, MAINTENANCE)."""
 
     __tablename__ = "machine_state_history"
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     machine_id = Column(Integer, ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    state = Column(String(20), nullable=False)  # running, stopped, failure
+    state = Column(String(20), nullable=False)  # MARCHE, PAUSE, ERREUR, MAINTENANCE
     started_at = Column(DateTime, nullable=False)
     ended_at = Column(DateTime, nullable=True)  # None = état en cours
     comment = Column(String(500))
