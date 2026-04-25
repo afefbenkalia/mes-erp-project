@@ -76,19 +76,13 @@ const formatMinutes = (minutes) => {
 
 const normalizeText = (value) => (value || "").toString().trim().toLowerCase();
 
-const inDateRange = (value, from, to) => {
-  if (!value) return false;
+const isAfterDate = (value, dateFrom) => {
+  if (!value || !dateFrom) return true;
   const target = new Date(value);
-  if (Number.isNaN(target.getTime())) return false;
-  if (from) {
-    const start = new Date(from);
-    if (!Number.isNaN(start.getTime()) && target < start) return false;
-  }
-  if (to) {
-    const end = new Date(to);
-    if (!Number.isNaN(end.getTime()) && target > end) return false;
-  }
-  return true;
+  if (Number.isNaN(target.getTime())) return true;
+  const start = new Date(dateFrom);
+  if (Number.isNaN(start.getTime())) return true;
+  return target >= start;
 };
 
 const calculatePriorityRank = (priority) => {
@@ -96,44 +90,6 @@ const calculatePriorityRank = (priority) => {
   if (priority === "HAUTE") return 1;
   if (priority === "MOYENNE") return 2;
   return 3;
-};
-
-const priorityBadge = (priority) => {
-  if (priority === "CRITIQUE") {
-    return "bg-rose-100 text-rose-700 ring-rose-200";
-  }
-  if (priority === "HAUTE") {
-    return "bg-amber-100 text-amber-700 ring-amber-200";
-  }
-  if (priority === "MOYENNE") {
-    return "bg-sky-100 text-sky-700 ring-sky-200";
-  }
-  return "bg-slate-100 text-slate-700 ring-slate-200";
-};
-
-const isInPeriod = (value, period) => {
-  if (!value || period === "ALL") return true;
-  const target = new Date(value);
-  if (Number.isNaN(target.getTime())) return false;
-  const now = new Date();
-  const msInDay = 24 * 3600 * 1000;
-
-  if (period === "DAY") {
-    return now.getTime() - target.getTime() <= msInDay;
-  }
-  if (period === "WEEK") {
-    return now.getTime() - target.getTime() <= 7 * msInDay;
-  }
-  if (period === "MONTH") {
-    return (
-      target.getFullYear() === now.getFullYear() &&
-      target.getMonth() === now.getMonth()
-    );
-  }
-  if (period === "YEAR") {
-    return target.getFullYear() === now.getFullYear();
-  }
-  return true;
 };
 
 const KpiCard = ({ title, value, icon: Icon, colorClass }) => (
@@ -148,6 +104,69 @@ const KpiCard = ({ title, value, icon: Icon, colorClass }) => (
   </article>
 );
 
+const FilterBar = ({ filters, onFilterChange, fields }) => (
+  <div className="mb-5">
+    <div className="mb-2 flex items-center gap-2">
+      <Filter className="h-3.5 w-3.5 text-slate-400" />
+      <p className="text-xs font-medium text-slate-500">Filtres rapides</p>
+    </div>
+    <div className="flex flex-wrap items-center gap-2">
+      {fields.map((field, idx) => {
+        if (field.type === "search") {
+          return (
+            <label key={idx} className="relative flex-1 min-w-[160px] max-w-[220px]">
+              <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-slate-400" />
+              <input
+                value={filters[field.name] || ""}
+                onChange={(e) => onFilterChange(field.name, e.target.value)}
+                placeholder={field.placeholder}
+                className="w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-2.5 text-xs outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              />
+            </label>
+          );
+        }
+        if (field.type === "select") {
+          return (
+            <select
+              key={idx}
+              value={filters[field.name] || "ALL"}
+              onChange={(e) => onFilterChange(field.name, e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            >
+              {field.options.map((opt) => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          );
+        }
+        if (field.type === "date") {
+          return (
+            <input
+              key={idx}
+              type="datetime-local"
+              value={filters[field.name] || ""}
+              onChange={(e) => onFilterChange(field.name, e.target.value)}
+              className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+          );
+        }
+        if (field.type === "text") {
+          return (
+            <input
+              key={idx}
+              value={filters[field.name] || ""}
+              onChange={(e) => onFilterChange(field.name, e.target.value)}
+              placeholder={field.placeholder}
+              className="flex-1 min-w-[120px] max-w-[180px] rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+          );
+        }
+        return null;
+      })}
+    </div>
+  </div>
+);
+
 export default function MaintenanceDashboard() {
   const [machines, setMachines] = useState([]);
   const [interventions, setInterventions] = useState([]);
@@ -158,26 +177,22 @@ export default function MaintenanceDashboard() {
     query: "",
     status: "ALL",
     dateFrom: "",
-    dateTo: "",
   });
   const [interventionFilters, setInterventionFilters] = useState({
     query: "",
     status: "ALL",
     dateFrom: "",
-    dateTo: "",
   });
   const [historyFilters, setHistoryFilters] = useState({
     query: "",
     technician: "",
     dateFrom: "",
-    dateTo: "",
   });
   const [preventiveFilters, setPreventiveFilters] = useState({
     machine: "ALL",
     status: "ALL",
     trigger: "ALL",
     dateFrom: "",
-    dateTo: "",
   });
   const [wsStatus, setWsStatus] = useState("disconnected");
   const [loading, setLoading] = useState(true);
@@ -269,6 +284,22 @@ export default function MaintenanceDashboard() {
     return map;
   }, [interventions]);
 
+  const updateDashboardFilter = (key, value) => {
+    setDashboardFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updateInterventionFilter = (key, value) => {
+    setInterventionFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updateHistoryFilter = (key, value) => {
+    setHistoryFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const updatePreventiveFilter = (key, value) => {
+    setPreventiveFilters((prev) => ({ ...prev, [key]: value }));
+  };
+
   const dashboardMachines = useMemo(() => {
     return machines.filter((machine) => {
       const machineText = `${machine.machine_reference} ${machine.machine_name}`;
@@ -277,9 +308,7 @@ export default function MaintenanceDashboard() {
         normalizeText(machineText).includes(normalizeText(dashboardFilters.query));
       const passStatus =
         dashboardFilters.status === "ALL" || machine.state === dashboardFilters.status;
-      const passDate =
-        (!dashboardFilters.dateFrom && !dashboardFilters.dateTo) ||
-        inDateRange(machine.last_update, dashboardFilters.dateFrom, dashboardFilters.dateTo);
+      const passDate = isAfterDate(machine.last_update, dashboardFilters.dateFrom);
       return passQuery && passStatus && passDate;
     });
   }, [dashboardFilters, machines]);
@@ -303,9 +332,7 @@ export default function MaintenanceDashboard() {
         const passStatus =
           interventionFilters.status === "ALL" || machine.state === interventionFilters.status;
         const dateTarget = intervention?.start_time || machine.last_update;
-        const passDate =
-          (!interventionFilters.dateFrom && !interventionFilters.dateTo) ||
-          inDateRange(dateTarget, interventionFilters.dateFrom, interventionFilters.dateTo);
+        const passDate = isAfterDate(dateTarget, interventionFilters.dateFrom);
 
         return {
           machine,
@@ -348,9 +375,7 @@ export default function MaintenanceDashboard() {
         const passTechnician =
           !normalizeText(historyFilters.technician) ||
           normalizeText(item.technician).includes(normalizeText(historyFilters.technician));
-        const passDate =
-          (!historyFilters.dateFrom && !historyFilters.dateTo) ||
-          inDateRange(item.date, historyFilters.dateFrom, historyFilters.dateTo);
+        const passDate = isAfterDate(item.date, historyFilters.dateFrom);
 
         return {
           ...item,
@@ -361,6 +386,12 @@ export default function MaintenanceDashboard() {
       })
       .filter((item) => item.visible);
   }, [history, historyFilters, machineById]);
+
+  const recentHistory = useMemo(() => {
+    return [...historyRows]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, 5);
+  }, [historyRows]);
 
   const preventiveRows = useMemo(() => {
     const now = Date.now();
@@ -388,9 +419,7 @@ export default function MaintenanceDashboard() {
         const passTrigger =
           preventiveFilters.trigger === "ALL" ||
           item.trigger_mode === preventiveFilters.trigger;
-        const passDate =
-          (!preventiveFilters.dateFrom && !preventiveFilters.dateTo) ||
-          (item.planned_date && inDateRange(item.planned_date, preventiveFilters.dateFrom, preventiveFilters.dateTo));
+        const passDate = isAfterDate(item.planned_date, preventiveFilters.dateFrom);
 
         return {
           ...item,
@@ -572,72 +601,7 @@ export default function MaintenanceDashboard() {
       </section>
 
       <section className={sectionShell}>
-        <div className="mb-4 flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Filtres dashboard</p>
-            <h2 className="mt-2 text-xl font-semibold text-slate-900">Filtrage complet des états machines</h2>
-          </div>
-          <span className="text-sm text-slate-500">{dashboardMachines.length} / {machines.length} machines</span>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-          <label className="relative">
-            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-            <input
-              value={dashboardFilters.query}
-              onChange={(e) =>
-                setDashboardFilters((prev) => ({
-                  ...prev,
-                  query: e.target.value,
-                }))
-              }
-              placeholder="Machine (nom/référence)"
-              className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-            />
-          </label>
-          <select
-            value={dashboardFilters.status}
-            onChange={(e) =>
-              setDashboardFilters((prev) => ({
-                ...prev,
-                status: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          >
-            <option value="ALL">Statut: tous</option>
-            <option value="MARCHE">MARCHE</option>
-            <option value="ERREUR">ERREUR</option>
-            <option value="MAINTENANCE">MAINTENANCE</option>
-            <option value="PAUSE">PAUSE</option>
-          </select>
-          <input
-            type="datetime-local"
-            value={dashboardFilters.dateFrom}
-            onChange={(e) =>
-              setDashboardFilters((prev) => ({
-                ...prev,
-                dateFrom: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          />
-          <input
-            type="datetime-local"
-            value={dashboardFilters.dateTo}
-            onChange={(e) =>
-              setDashboardFilters((prev) => ({
-                ...prev,
-                dateTo: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          />
-        </div>
-      </section>
-
-      <section className={sectionShell}>
-        <div className="mb-5 flex flex-col gap-4 border-b border-slate-100 pb-5 sm:flex-row sm:items-start sm:justify-between">
+        <div className="mb-4 flex flex-col gap-4 border-b border-slate-100 pb-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Centre de supervision</p>
             <h2 className="mt-2 text-xl font-semibold text-slate-900">État des machines en temps réel</h2>
@@ -652,8 +616,26 @@ export default function MaintenanceDashboard() {
             <span className="inline-flex items-center rounded-full bg-slate-50 px-3 py-1 ring-1 ring-slate-200">
               WebSocket: {wsStatus}
             </span>
+            <span className="text-sm text-slate-500">{dashboardMachines.length} / {machines.length} affichées</span>
           </div>
         </div>
+
+        <FilterBar
+          filters={dashboardFilters}
+          onFilterChange={updateDashboardFilter}
+          fields={[
+            { type: "search", name: "query", placeholder: "Machine..." },
+            { type: "select", name: "status", options: [
+              { value: "ALL", label: "Tous les statuts" },
+              { value: "MARCHE", label: "MARCHE" },
+              { value: "ERREUR", label: "ERREUR" },
+              { value: "MAINTENANCE", label: "MAINTENANCE" },
+              { value: "PAUSE", label: "PAUSE" },
+            ]},
+            { type: "date", name: "dateFrom" },
+          ]}
+        />
+
         <div className="overflow-auto">
           <table className="min-w-full border-separate border-spacing-0 text-sm">
             <thead>
@@ -688,12 +670,70 @@ export default function MaintenanceDashboard() {
         </div>
       </section>
 
+      <section className={sectionShell}>
+        <div className="mb-4 flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Activité récente</p>
+            <h2 className="mt-2 text-xl font-semibold text-slate-900">Dernières interventions clôturées</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Les 5 dernières réparations effectuées avec leur durée et technicien.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab("historique")}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Clock3 className="h-4 w-4" />
+            Voir tout l'historique
+          </button>
+        </div>
+
+        {recentHistory.length > 0 ? (
+          <div className="space-y-3">
+            {recentHistory.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col gap-2 rounded-xl border border-slate-100 bg-slate-50/50 p-4 transition hover:bg-slate-50 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 rounded-lg bg-emerald-100 p-1.5">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-slate-900">{item.machineLabel}</p>
+                    <p className="text-xs text-slate-500">
+                      <span className="font-medium">{item.technician}</span> · {item.action_effectuee}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 text-xs text-slate-500 sm:ml-auto sm:shrink-0">
+                  <span className="inline-flex items-center gap-1">
+                    <Timer className="h-3.5 w-3.5" />
+                    {formatDuration(item.duration_seconds)}
+                  </span>
+                  <span className="inline-flex items-center gap-1">
+                    <Calendar className="h-3.5 w-3.5" />
+                    {formatDate(item.date)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-6 py-8">
+            <Clock3 className="mb-2 h-8 w-8 text-slate-300" />
+            <p className="text-sm font-medium text-slate-500">Aucune intervention terminée</p>
+            <p className="mt-1 text-xs text-slate-400">L'historique s'affichera ici après la première clôture.</p>
+          </div>
+        )}
+      </section>
     </div>
   );
 
   const renderInterventions = () => (
     <section className={sectionShell}>
-      <div className="mb-5 flex flex-col gap-2 border-b border-slate-100 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-4 flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Intervention</p>
           <h2 className="mt-2 text-xl font-semibold text-slate-900">Machines à traiter</h2>
@@ -706,60 +746,23 @@ export default function MaintenanceDashboard() {
           <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700 ring-1 ring-amber-100">{kpis.interventionsOpen} ouvertes</span>
         </div>
       </div>
-      <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-4">
-        <label className="relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            value={interventionFilters.query}
-            onChange={(e) =>
-              setInterventionFilters((prev) => ({
-                ...prev,
-                query: e.target.value,
-              }))
-            }
-            placeholder="Machine"
-            className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          />
-        </label>
-        <select
-          value={interventionFilters.status}
-          onChange={(e) =>
-            setInterventionFilters((prev) => ({
-              ...prev,
-              status: e.target.value,
-            }))
-          }
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        >
-          <option value="ALL">Statut</option>
-          <option value="ERREUR">ERREUR</option>
-          <option value="MAINTENANCE">MAINTENANCE</option>
-          <option value="MARCHE">MARCHE</option>
-          <option value="PAUSE">PAUSE</option>
-        </select>
-        <input
-          type="datetime-local"
-          value={interventionFilters.dateFrom}
-          onChange={(e) =>
-            setInterventionFilters((prev) => ({
-              ...prev,
-              dateFrom: e.target.value,
-            }))
-          }
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        />
-        <input
-          type="datetime-local"
-          value={interventionFilters.dateTo}
-          onChange={(e) =>
-            setInterventionFilters((prev) => ({
-              ...prev,
-              dateTo: e.target.value,
-            }))
-          }
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        />
-      </div>
+
+      <FilterBar
+        filters={interventionFilters}
+        onFilterChange={updateInterventionFilter}
+        fields={[
+          { type: "search", name: "query", placeholder: "Machine..." },
+          { type: "select", name: "status", options: [
+            { value: "ALL", label: "Tous les statuts" },
+            { value: "ERREUR", label: "ERREUR" },
+            { value: "MAINTENANCE", label: "MAINTENANCE" },
+            { value: "MARCHE", label: "MARCHE" },
+            { value: "PAUSE", label: "PAUSE" },
+          ]},
+          { type: "date", name: "dateFrom" },
+        ]}
+      />
+
       <div className="space-y-4">
         {machineCards.map(({ machine, intervention, ageMinutes }) => {
           const isError = machine.state === "ERREUR";
@@ -847,7 +850,7 @@ export default function MaintenanceDashboard() {
 
   const renderHistory = () => (
     <section className={sectionShell}>
-      <div className="mb-5 flex flex-col gap-2 border-b border-slate-100 pb-5 sm:flex-row sm:items-end sm:justify-between">
+      <div className="mb-4 flex flex-col gap-2 border-b border-slate-100 pb-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Traçabilité</p>
           <h2 className="mt-2 text-xl font-semibold text-slate-900">Historique des réparations</h2>
@@ -859,55 +862,17 @@ export default function MaintenanceDashboard() {
           {historyRows.length} / {history.length} enregistrements
         </span>
       </div>
-      <div className="mb-5 grid grid-cols-1 gap-3 md:grid-cols-4">
-        <label className="relative">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-          <input
-            value={historyFilters.query}
-            onChange={(e) =>
-              setHistoryFilters((prev) => ({
-                ...prev,
-                query: e.target.value,
-              }))
-            }
-            placeholder="Machine ou action"
-            className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-sm outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-          />
-        </label>
-        <input
-          value={historyFilters.technician}
-          onChange={(e) =>
-            setHistoryFilters((prev) => ({
-              ...prev,
-              technician: e.target.value,
-            }))
-          }
-          placeholder="Technicien"
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        />
-        <input
-          type="datetime-local"
-          value={historyFilters.dateFrom}
-          onChange={(e) =>
-            setHistoryFilters((prev) => ({
-              ...prev,
-              dateFrom: e.target.value,
-            }))
-          }
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        />
-        <input
-          type="datetime-local"
-          value={historyFilters.dateTo}
-          onChange={(e) =>
-            setHistoryFilters((prev) => ({
-              ...prev,
-              dateTo: e.target.value,
-            }))
-          }
-          className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-100"
-        />
-      </div>
+
+      <FilterBar
+        filters={historyFilters}
+        onFilterChange={updateHistoryFilter}
+        fields={[
+          { type: "search", name: "query", placeholder: "Machine ou action..." },
+          { type: "text", name: "technician", placeholder: "Technicien" },
+          { type: "date", name: "dateFrom" },
+        ]}
+      />
+
       <div className="overflow-auto">
         <table className="min-w-full border-separate border-spacing-0 text-sm">
           <thead>
@@ -944,7 +909,6 @@ export default function MaintenanceDashboard() {
 
   const renderPreventive = () => (
     <section className={sectionShell}>
-      {/* En-tête avec compteurs et résumé */}
       <div className="mb-6 flex flex-col gap-2 border-b border-slate-100 pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <p className="text-sm font-medium uppercase tracking-[0.24em] text-slate-400">Maintenance Préventive</p>
@@ -973,87 +937,6 @@ export default function MaintenanceDashboard() {
         </div>
       </div>
 
-      {/* Filtres */}
-      <div className="mb-6">
-        <div className="mb-3 flex items-center gap-2">
-          <Filter className="h-4 w-4 text-slate-400" />
-          <p className="text-sm font-medium text-slate-500">Filtres</p>
-        </div>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
-          <select
-            value={preventiveFilters.machine}
-            onChange={(e) =>
-              setPreventiveFilters((prev) => ({
-                ...prev,
-                machine: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-          >
-            <option value="ALL">Toutes les machines</option>
-            {machines.map((machine) => (
-              <option key={machine.machine_id} value={String(machine.machine_id)}>
-                {machine.machine_reference}
-              </option>
-            ))}
-          </select>
-          <select
-            value={preventiveFilters.status}
-            onChange={(e) =>
-              setPreventiveFilters((prev) => ({
-                ...prev,
-                status: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-          >
-            <option value="ALL">Tous les statuts</option>
-            <option value="PLANIFIE">Planifié</option>
-            <option value="EN COURS">En cours</option>
-            <option value="TERMINE">Terminé</option>
-          </select>
-          <select
-            value={preventiveFilters.trigger}
-            onChange={(e) =>
-              setPreventiveFilters((prev) => ({
-                ...prev,
-                trigger: e.target.value,
-              }))
-            }
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-          >
-            <option value="ALL">Type de déclenchement</option>
-            <option value="SCHEDULED">Planifié</option>
-            <option value="RUNTIME">Basé runtime</option>
-          </select>
-          <input
-            type="datetime-local"
-            value={preventiveFilters.dateFrom}
-            onChange={(e) =>
-              setPreventiveFilters((prev) => ({
-                ...prev,
-                dateFrom: e.target.value,
-              }))
-            }
-            placeholder="Date début"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-          />
-          <input
-            type="datetime-local"
-            value={preventiveFilters.dateTo}
-            onChange={(e) =>
-              setPreventiveFilters((prev) => ({
-                ...prev,
-                dateTo: e.target.value,
-              }))
-            }
-            placeholder="Date fin"
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-indigo-400 focus:ring-4 focus:ring-indigo-50"
-          />
-        </div>
-      </div>
-
-      {/* Formulaire de création/édition */}
       <div className="mb-8 overflow-hidden rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/50 to-white shadow-sm">
         <div className="border-b border-indigo-100 bg-white/80 px-5 py-4 backdrop-blur">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -1191,7 +1074,29 @@ export default function MaintenanceDashboard() {
         </div>
       </div>
 
-      {/* Toggle vue cartes/tableau */}
+      <FilterBar
+        filters={preventiveFilters}
+        onFilterChange={updatePreventiveFilter}
+        fields={[
+          { type: "select", name: "machine", options: [
+            { value: "ALL", label: "Toutes les machines" },
+            ...machines.map((m) => ({ value: String(m.machine_id), label: m.machine_reference })),
+          ]},
+          { type: "select", name: "status", options: [
+            { value: "ALL", label: "Tous les statuts" },
+            { value: "PLANIFIE", label: "Planifié" },
+            { value: "EN COURS", label: "En cours" },
+            { value: "TERMINE", label: "Terminé" },
+          ]},
+          { type: "select", name: "trigger", options: [
+            { value: "ALL", label: "Type déclenchement" },
+            { value: "SCHEDULED", label: "Planifié" },
+            { value: "RUNTIME", label: "Basé runtime" },
+          ]},
+          { type: "date", name: "dateFrom" },
+        ]}
+      />
+
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm font-medium text-slate-600">
           {preventiveRows.length} maintenance{preventiveRows.length > 1 ? 's' : ''} trouvée{preventiveRows.length > 1 ? 's' : ''}
@@ -1220,7 +1125,6 @@ export default function MaintenanceDashboard() {
         </div>
       </div>
 
-      {/* Vue Cartes */}
       {preventiveViewMode === "cards" ? (
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-3">
           {preventiveRows.map((item) => {
@@ -1230,14 +1134,12 @@ export default function MaintenanceDashboard() {
                 key={item.id}
                 className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition hover:shadow-md"
               >
-                {/* Barre de statut en haut */}
                 <div className={`absolute inset-x-0 top-0 h-1 ${item.status === "TERMINE" ? "bg-emerald-500" :
                   item.status === "EN COURS" ? "bg-amber-500" :
                     "bg-indigo-500"
                   }`} />
 
                 <div className="relative">
-                  {/* En-tête de la carte */}
                   <div className="mb-4 flex items-start justify-between">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
@@ -1266,7 +1168,6 @@ export default function MaintenanceDashboard() {
                     </span>
                   </div>
 
-                  {/* Détails */}
                   <div className="ml-9 space-y-2">
                     <div className="flex items-center gap-2 text-xs text-slate-500">
                       <Settings className="h-3.5 w-3.5" />
@@ -1287,7 +1188,6 @@ export default function MaintenanceDashboard() {
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="mt-4 ml-9 flex gap-2 border-t border-slate-100 pt-4">
                     <button
                       type="button"
@@ -1319,7 +1219,6 @@ export default function MaintenanceDashboard() {
           ) : null}
         </div>
       ) : (
-        /* Vue Tableau */
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
           <table className="min-w-full border-separate border-spacing-0">
             <thead>
@@ -1424,7 +1323,7 @@ export default function MaintenanceDashboard() {
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-50 p-4 text-slate-900 sm:p-6">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-72 bg-[radial-gradient(circle_at_top_left,_rgba(15,23,42,0.16),_transparent_42%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.14),_transparent_35%)]" />
+      <div className="" />
       <main className="mx-auto max-w-7xl space-y-6">
         <section className="relative overflow-hidden rounded-[32px] border border-slate-900/10 bg-slate-900 px-5 py-5 text-white shadow-[0_30px_80px_-50px_rgba(15,23,42,0.95)] sm:px-6 sm:py-6">
           <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(148,163,184,0.14),transparent_42%)]" />

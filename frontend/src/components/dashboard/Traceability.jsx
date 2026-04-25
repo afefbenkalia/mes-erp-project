@@ -466,7 +466,7 @@ export default function Traceability() {
   };
 
   const exportToPDF = (lot) => {
-  window.open(`http://127.0.0.1:8000/api/traceability/lots/${lot.numero_lot}/pdf`);
+   window.open(`http://127.0.0.1:8000/traceability/lots/${lot.numero_lot}/pdf`);
   };
 
   const toggleStepDetails = (stepId) => {

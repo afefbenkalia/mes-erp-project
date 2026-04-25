@@ -1,11 +1,9 @@
-// OrdresFabrication.jsx — MES (CORRIGÉ)
+// OrdresFabrication.jsx — MES (CORRIGÉ - sans champ machine)
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const MES_OF_URL = "http://127.0.0.1:8000/api/ordres-fabrication";
 const MES_PROD_URL = "http://127.0.0.1:8000/api/productions";
-
-const MACHINES = ["Carde 01", "Carde 02", "Carde 03", "Carde 04", "Carde 05"];
 
 // ✅ CORRIGÉ: Utiliser quantite_produit_fini au lieu de quantite
 const computeStatut = (of, productions = []) => {
@@ -34,7 +32,6 @@ const STATUT_ICON = { "Planifié": "📅", "En cours": "⚙️", "Terminé": "�
 const OrdresFabrication = () => {
   const [ofs, setOfs] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [filterMachine, setFilterMachine] = useState("");
   const [filterOF, setFilterOF] = useState("");
   const [filterStatut, setFilterStatut] = useState("");
   const [filterDate, setFilterDate] = useState("");
@@ -98,7 +95,6 @@ const OrdresFabrication = () => {
   const ofPlanifie = ofs.filter(o => o.statut === "Planifié").length;
 
   const filteredOFs = ofs.filter(o =>
-    (!filterMachine || o.machine === filterMachine) &&
     (!filterOF || o.numero?.toLowerCase().includes(filterOF.toLowerCase())) &&
     (!filterStatut || o.statut === filterStatut) &&
     (!filterDate || o.date_debut === filterDate)
@@ -145,13 +141,8 @@ const OrdresFabrication = () => {
       <div style={s.content}>
         <h2 style={s.sectionTitle}>Liste des Ordres de Fabrication</h2>
 
-        {/* FILTRES */}
+        {/* FILTRES - Supprimé filtre machine */}
         <div style={s.filterRow}>
-          <select style={s.select} value={filterMachine} onChange={e => setFilterMachine(e.target.value)}>
-            <option value="">Toutes les machines</option>
-            {MACHINES.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
-
           <input
             style={s.input}
             type="text"
@@ -192,7 +183,7 @@ const OrdresFabrication = () => {
             <table style={s.table}>
               <thead>
                 <tr>
-                  {["N° OF", "Machine", "Produit", "Quantité", "Produit", "Début", "Fin", "Statut"].map(h => (
+                  {["N° OF", "Produit", "Quantité", "Début", "Fin", "Statut"].map(h => (
                     <th key={h} style={s.th}>{h}</th>
                   ))}
                 </tr>
@@ -209,7 +200,6 @@ const OrdresFabrication = () => {
                       <td style={s.td}>
                         <span style={s.ofTag}>{o.numero}</span>
                       </td>
-                      <td style={s.td}>{o.machine}</td>
                       <td style={s.td}>{o.produit}</td>
                       <td style={s.td}>
                         <strong>{o.quantite}</strong> kg
@@ -285,7 +275,7 @@ const s = {
   sectionTitle: { margin: "0 0 1.5rem", color: "#0f172a", fontSize: "1.2rem", fontWeight: "600" },
   filterRow: {
     display: "grid",
-    gridTemplateColumns: "repeat(4,1fr)",
+    gridTemplateColumns: "repeat(3,1fr)",
     gap: "1rem",
     marginBottom: "1.25rem",
   },

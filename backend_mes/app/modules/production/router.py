@@ -1,25 +1,42 @@
+"""
+router.py – Production MES · Pipeline automatique
+
+FIX CRITIQUE : /rebuts/ déclaré AVANT /{production_id}
+→ FastAPI ne capturera plus "rebuts" comme un int (422 corrigé)
+→ Plus de 307 redirect
+"""
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from . import service, schema, model
-
-router = APIRouter(prefix="/productions", tags=["Production"])
+from . import service, schema
 
 
-# =========================
-# PRODUCTIONS
-# =========================
+router = APIRouter(prefix="/productions", tags=["Production MES"])
 
-@router.get("/", response_model=list[schema.ProductionResponse])
+
+# ─────────────────────────────────────────────
+#  REBUTS  ← EN PREMIER, avant /{production_id}
+# ─────────────────────────────────────────────
+
+@router.post("/rebuts/", response_model=schema.RebutResponse)
+def create_rebut(data: schema.RebutCreate, db: Session = Depends(get_db)):
+    return service.create_rebut(db, data)
+
+
+@router.get("/rebuts/", response_model=list[schema.RebutResponse])
+def get_rebuts(db: Session = Depends(get_db)):
+    return service.get_all_rebuts(db)
+
+
+# ─────────────────────────────────────────────
+#  PRODUCTION
+# ─────────────────────────────────────────────
+
+@router.get("/", response_model=list[schema.ProductionSummaryResponse])
 def get_productions(of_id: int | None = None, db: Session = Depends(get_db)):
-
-    if of_id:
-        return db.query(model.Production).filter(
-            model.Production.of_id == of_id
-        ).all()
-
-    return db.query(model.Production).all()
+    return service.get_productions(db, of_id=of_id)
 
 
 @router.post("/", response_model=schema.ProductionResponse)
@@ -27,29 +44,35 @@ def create_production(data: schema.ProductionCreate, db: Session = Depends(get_d
     return service.create_production(db, data)
 
 
-# =========================
-# REBUTS
-# =========================
-
-@router.post("/rebuts", response_model=schema.RebutResponse)
-def create_rebut(data: schema.RebutCreate, db: Session = Depends(get_db)):
-    return service.create_rebut(db, data)
+@router.get("/{production_id}", response_model=schema.ProductionResponse)
+def get_production(production_id: int, db: Session = Depends(get_db)):
+    return service.get_production(db, production_id)
 
 
-@router.get("/rebuts", response_model=list[schema.RebutResponse])
-def get_rebuts(db: Session = Depends(get_db)):
-    return service.get_all_rebuts(db)
+# ─────────────────────────────────────────────
+#  PIPELINE
+# ─────────────────────────────────────────────
+
+@router.get(
+    "/{production_id}/etape-courante",
+    response_model=schema.EtapeResponse,
+)
+def get_etape_courante(production_id: int, db: Session = Depends(get_db)):
+    return service.get_etape_courante(db, production_id)
 
 
-# =========================
-# TEMPS MACHINE
-# =========================
+@router.post(
+    "/{production_id}/avancer",
+    response_model=schema.PipelineStateResponse,
+)
+async def avancer_pipeline(
+    production_id: int,
+    data: schema.EtapeCreate,
+    db: Session = Depends(get_db),
+):
+    return await service.avancer_pipeline(db, production_id, data)
 
-@router.post("/temps", response_model=schema.TempsResponse)
-def create_temps(data: schema.TempsCreate, db: Session = Depends(get_db)):
-    return service.create_temps(db, data)
 
-
-@router.get("/temps", response_model=list[schema.TempsResponse])
-def get_temps(db: Session = Depends(get_db)):
-    return service.get_all_temps(db)
+@router.get("/{production_id}/etapes", response_model=list[schema.EtapeResponse])
+def get_etapes(production_id: int, db: Session = Depends(get_db)):
+    return service.get_etapes(db, production_id)

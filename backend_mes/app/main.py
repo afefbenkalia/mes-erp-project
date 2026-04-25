@@ -44,14 +44,7 @@ app.add_middleware(
 )
 
 # Création des tables
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
-    try:
-        normalize_legacy_machine_states(db)
-    finally:
-        db.close()
+Base.metadata.create_all(bind=engine)
 ensure_users_hashed_password_column()
 ensure_users_activity_columns()
 ensure_productions_of_id_column()
