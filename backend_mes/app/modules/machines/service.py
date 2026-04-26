@@ -167,6 +167,7 @@ def add_state_history(
     db: Session,
     machine_id: int,
     data: StateHistoryCreate,
+    changed_by: Optional[str] = None,
 ) -> MachineStateHistory:
     """Ajoute une entrée à l'historique des états et synchronise l'état courant."""
     started = data.started_at or utc_now_naive()
@@ -176,6 +177,7 @@ def add_state_history(
         started_at=started,
         ended_at=data.ended_at,
         comment=data.comment,
+        changed_by=changed_by or data.changed_by,
     )
     if entry.ended_at is None:
         status = _ensure_operational_status(db, machine_id)
@@ -240,6 +242,7 @@ def change_state(
     machine_id: int,
     new_state: str,
     comment: Optional[str] = None,
+    changed_by: Optional[str] = None,
 ) -> MachineStateHistory:
     """
     Change l'état d'une machine :
@@ -262,4 +265,27 @@ def change_state(
         db,
         machine_id,
         StateHistoryCreate(state=new_state, started_at=now, ended_at=None, comment=comment),
+        changed_by=changed_by,
     )
+from .model import MachineData
+
+def create_machine_data(db: Session, data: MachineDataCreate):
+    machine = get_machine_by_reference(db, data.machine_reference)
+
+    if not machine:
+        raise Exception("Machine non trouvée")
+
+    entry = MachineData(
+        machine_id=machine.id,
+        state=data.state,
+        temperature=data.temperature,
+        speed=data.speed,
+        vibration=data.vibration,
+        production=data.production,
+    )
+
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+
+    return entry

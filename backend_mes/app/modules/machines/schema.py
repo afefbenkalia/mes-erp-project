@@ -78,6 +78,7 @@ class StateHistoryCreate(BaseModel):
     started_at: Optional[datetime] = None  # default = now
     ended_at: Optional[datetime] = None
     comment: Optional[str] = Field(None, max_length=500)
+    changed_by: Optional[str] = Field(None, max_length=120)
 
 
 class StateHistoryUpdate(BaseModel):
@@ -98,6 +99,7 @@ class StateHistoryResponse(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime] = None
     comment: Optional[str] = None
+    changed_by: Optional[str] = None
     created_at: datetime
 
     @field_serializer("started_at", "ended_at", "created_at")
@@ -125,3 +127,24 @@ class ChangeStateRequest(BaseModel):
 
     state: str = Field(..., pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$")
     comment: Optional[str] = Field(None, max_length=500)
+    error_type: Optional[str] = Field(None, max_length=120)  # pour déclaration ERREUR
+class MachineDataCreate(BaseModel):
+    machine_reference: str
+    state: str
+    temperature: float
+    speed: int
+    vibration: float
+    production: int
+
+
+class MachineDataResponse(BaseModel):
+    id: int
+    machine_id: int
+    timestamp: datetime
+    state: str
+    temperature: float
+    speed: int
+    vibration: float
+    production: int
+
+    model_config = ConfigDict(from_attributes=True)

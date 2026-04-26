@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSock
 from sqlalchemy.orm import Session
 
 from app.core.datetime_utc import utc_now_naive
+from app.core.security import get_current_user
 from app.database import get_db
 from app.modules.auth.model import User
 from app.utils.email_service import send_maintenance_notification_email
@@ -40,6 +41,21 @@ from .service import (
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 logger = logging.getLogger(__name__)
+
+
+async def _email_operator_users(db: Session, payload: dict) -> None:
+    """Envoie un e-mail aux opérateurs actifs pour les notifier d'une réparation."""
+    recipients = (
+        db.query(User.email)
+        .filter(User.role.in_(["operator", "operateur"]), User.is_active.is_(True))
+        .all()
+    )
+    emails = [email for (email,) in recipients if email]
+    if not emails:
+        return
+    await asyncio.gather(
+        *[asyncio.to_thread(send_maintenance_notification_email, email, payload) for email in emails]
+    )
 
 
 async def _email_maintenance_users(db: Session, payload: dict) -> None:
@@ -215,7 +231,12 @@ async def simulation_error_event(data: SimulationErrorRequest, db: Session = Dep
 
 
 @router.post("/machines/{machine_id}/take-over", response_model=InterventionResponse)
-async def take_over(machine_id: int, data: HandleErrorRequest, db: Session = Depends(get_db)):
+async def take_over(
+    machine_id: int,
+    data: HandleErrorRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     try:
         machine, status, intervention = take_over_machine(db, machine_id, data.technician)
     except ValueError as exc:
@@ -234,7 +255,7 @@ async def take_over(machine_id: int, data: HandleErrorRequest, db: Session = Dep
     await maintenance_ws_manager.broadcast(
         "notification",
         {
-            "message": f"Machine {machine.reference} prise en charge",
+            "message": f"Machine {machine.reference} prise en charge par {data.technician}",
             "machine_id": machine.id,
         },
     )
@@ -242,7 +263,12 @@ async def take_over(machine_id: int, data: HandleErrorRequest, db: Session = Dep
 
 
 @router.post("/machines/{machine_id}/mark-repaired", response_model=InterventionResponse)
-async def mark_repaired(machine_id: int, data: MarkRepairedRequest, db: Session = Depends(get_db)):
+async def mark_repaired(
+    machine_id: int,
+    data: MarkRepairedRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     try:
         machine, status, intervention, history = mark_machine_repaired(
             db,
@@ -253,18 +279,19 @@ async def mark_repaired(machine_id: int, data: MarkRepairedRequest, db: Session 
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    await maintenance_ws_manager.broadcast(
-        "intervention_completed",
-        {
-            "intervention_id": intervention.id,
-            "machine_id": machine.id,
-            "machine_reference": machine.reference,
-            "action_effectuee": history.action_effectuee,
-            "duration_seconds": history.duration_seconds,
-            "technician": history.technician,
-            "date": str(history.date),
-        },
-    )
+    repair_payload = {
+        "intervention_id": intervention.id,
+        "machine_id": machine.id,
+        "machine_reference": machine.reference,
+        "machine_name": machine.name,
+        "action_effectuee": history.action_effectuee,
+        "duration_seconds": history.duration_seconds,
+        "technician": history.technician,
+        "date": str(history.date),
+        "state": status.state,  # PAUSE
+    }
+
+    await maintenance_ws_manager.broadcast("intervention_completed", repair_payload)
     await maintenance_ws_manager.broadcast(
         "machine_update",
         {
@@ -275,6 +302,22 @@ async def mark_repaired(machine_id: int, data: MarkRepairedRequest, db: Session 
             "last_update": str(status.last_update),
         },
     )
+    # Notifier les opérateurs que la machine est réparée et en PAUSE
+    operator_payload = {
+        "message": f"Machine {machine.reference} réparée — en PAUSE, prête à relancer",
+        "machine_id": machine.id,
+        "machine_reference": machine.reference,
+        "machine_name": machine.name,
+        "state": status.state,
+        "technician": data.technician,
+        "action_effectuee": data.action_effectuee,
+    }
+    await maintenance_ws_manager.broadcast("machine_repaired", operator_payload)
+    try:
+        await _email_operator_users(db, operator_payload)
+    except Exception:
+        logger.exception("Erreur lors de la notification e-mail aux opérateurs pour machine %s", machine_id)
+
     return InterventionResponse.model_validate(intervention)
 
 

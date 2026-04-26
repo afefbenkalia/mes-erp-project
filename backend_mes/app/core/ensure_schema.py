@@ -118,3 +118,69 @@ def ensure_preventive_maintenance_columns() -> None:
             ).first()
             if row is None:
                 conn.execute(text(ddl))
+
+
+def ensure_machine_state_history_changed_by() -> None:
+    """Add changed_by column to machine_state_history for audit trail."""
+    with engine.begin() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'machine_state_history'
+                  AND column_name = 'changed_by'
+                """
+            )
+        ).first()
+        if row is None:
+            conn.execute(
+                text("ALTER TABLE machine_state_history ADD COLUMN changed_by VARCHAR(120)")
+            )
+
+
+def ensure_machines_reference_not_unique() -> None:
+    """Allow duplicate machine references by removing unique DB constraints/indexes."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DO $blk$
+                DECLARE
+                    r RECORD;
+                BEGIN
+                    FOR r IN
+                        SELECT c.conname
+                        FROM pg_constraint c
+                        JOIN pg_class t ON t.oid = c.conrelid
+                        JOIN pg_namespace n ON n.oid = t.relnamespace
+                        WHERE n.nspname = 'public'
+                          AND t.relname = 'machines'
+                          AND c.contype = 'u'
+                          AND EXISTS (
+                              SELECT 1
+                              FROM unnest(c.conkey) AS colnum
+                              JOIN pg_attribute a
+                                ON a.attrelid = c.conrelid
+                               AND a.attnum = colnum
+                              WHERE a.attname = 'reference'
+                          )
+                    LOOP
+                        EXECUTE format('ALTER TABLE public.machines DROP CONSTRAINT IF EXISTS %I', r.conname);
+                    END LOOP;
+
+                    FOR r IN
+                        SELECT i.indexname
+                        FROM pg_indexes i
+                        WHERE i.schemaname = 'public'
+                          AND i.tablename = 'machines'
+                          AND i.indexdef ILIKE 'CREATE UNIQUE INDEX%'
+                          AND i.indexdef ILIKE '%(reference%'
+                    LOOP
+                        EXECUTE format('DROP INDEX IF EXISTS public.%I', r.indexname);
+                    END LOOP;
+                END
+                $blk$;
+                """
+            )
+        )

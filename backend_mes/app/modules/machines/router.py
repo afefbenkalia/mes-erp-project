@@ -1,36 +1,93 @@
 """Routes API pour la gestion des machines."""
 
+import asyncio
+import logging
 from typing import Optional, List
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.security import get_current_user
 from app.database import get_db
+from app.modules.auth.model import User
+from app.modules.maintenance.realtime import maintenance_ws_manager
+from app.utils.email_service import send_maintenance_notification_email
+
 from .model import Machine
 from .schema import (
-    MachineCreate,
-    MachineUpdate,
-    MachineResponse,
-    MachineInDB,
-    StateHistoryCreate,
-    StateHistoryUpdate,
-    StateHistoryResponse,
-    MachineCurrentState,
     ChangeStateRequest,
+    MachineCreate,
+    MachineCurrentState,
+    MachineDataCreate,
+    MachineDataResponse,
+    MachineInDB,
+    MachineResponse,
+    MachineUpdate,
+    StateHistoryCreate,
+    StateHistoryResponse,
+    StateHistoryUpdate,
 )
 from .service import (
-    get_machines,
-    get_machine_by_id,
-    get_machine_by_reference,
+    add_state_history,
+    change_state,
+    close_current_state,
     create_machine,
-    update_machine,
+    create_machine_data,
     delete_machine,
     get_current_state,
+    get_machine_by_id,
+    get_machines,
     get_state_history,
-    add_state_history,
-    close_current_state,
+    update_machine,
     update_state_history,
-    change_state,
 )
+
+logger = logging.getLogger(__name__)
+
+# Transitions autorisées depuis l'endpoint opérateur (jamais vers MAINTENANCE)
+_OPERATOR_BLOCKED_CURRENT = {"ERREUR", "MAINTENANCE"}
+_OPERATOR_BLOCKED_TARGET = {"MAINTENANCE"}
+
+# Transitions valides : (état_courant, nouvel_état)
+_VALID_TRANSITIONS = {
+    ("MARCHE", "PAUSE"),
+    ("MARCHE", "ERREUR"),
+    ("PAUSE", "MARCHE"),
+    ("PAUSE", "ERREUR"),
+}
+
+
+async def _notify_maintenance_error(db: Session, machine, declared_by: str, comment: str | None) -> None:
+    """Diffuse une notification ERREUR aux clients WS et envoie un e-mail à la maintenance."""
+    payload = {
+        "message": f"Machine {machine.reference} en ERREUR",
+        "machine_id": machine.id,
+        "machine_reference": machine.reference,
+        "machine_name": machine.name,
+        "state": "ERREUR",
+        "declared_by": declared_by,
+        "comment": comment or "",
+    }
+    await maintenance_ws_manager.broadcast("notification", payload)
+    await maintenance_ws_manager.broadcast(
+        "machine_update",
+        {
+            "machine_id": machine.id,
+            "machine_reference": machine.reference,
+            "machine_name": machine.name,
+            "state": "ERREUR",
+        },
+    )
+    recipients = (
+        db.query(User.email)
+        .filter(User.role.in_(["maintenance", "responsable_maintenance"]), User.is_active.is_(True))
+        .all()
+    )
+    emails = [e for (e,) in recipients if e]
+    if emails:
+        await asyncio.gather(
+            *[asyncio.to_thread(send_maintenance_notification_email, email, payload) for email in emails]
+        )
 
 
 router = APIRouter(prefix="/machines", tags=["machines"])
@@ -83,8 +140,6 @@ def get_machine(machine_id: int, db: Session = Depends(get_db)):
 @router.post("", response_model=MachineInDB, status_code=201)
 def create_machine_endpoint(data: MachineCreate, db: Session = Depends(get_db)):
     """Crée une nouvelle machine."""
-    if get_machine_by_reference(db, data.reference):
-        raise HTTPException(status_code=400, detail="Une machine avec cette référence existe déjà")
     return create_machine(db, data)
 
 
@@ -94,9 +149,6 @@ def update_machine_endpoint(machine_id: int, data: MachineUpdate, db: Session = 
     machine = get_machine_by_id(db, machine_id)
     if not machine:
         raise HTTPException(status_code=404, detail="Machine non trouvée")
-    if data.reference and data.reference != machine.reference:
-        if get_machine_by_reference(db, data.reference):
-            raise HTTPException(status_code=400, detail="Cette référence est déjà utilisée")
     return update_machine(db, machine, data)
 
 
@@ -162,19 +214,64 @@ def add_machine_state_history(
 
 
 @router.post("/{machine_id}/change-state", response_model=StateHistoryResponse, status_code=201)
-def change_machine_state(
+async def change_machine_state(
     machine_id: int,
     data: ChangeStateRequest,
     db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
 ):
     """
-    Change l'état de la machine : clôture l'état actuel et enregistre le nouveau.
-    État : MARCHE | PAUSE | ERREUR | MAINTENANCE
+    Change l'état de la machine (endpoint opérateur).
+    Transitions autorisées : MARCHE↔PAUSE, MARCHE/PAUSE→ERREUR.
+    MAINTENANCE est interdit ici — passer par l'endpoint maintenance/take-over.
     """
     machine = get_machine_by_id(db, machine_id)
     if not machine:
         raise HTTPException(status_code=404, detail="Machine non trouvée")
-    return change_state(db, machine_id, data.state, comment=data.comment)
+
+    # --- Règle 1 : MAINTENANCE interdit depuis cet endpoint ---
+    if data.state in _OPERATOR_BLOCKED_TARGET:
+        raise HTTPException(
+            status_code=403,
+            detail="Transition vers MAINTENANCE interdite : utilisez le workflow maintenance (prise en charge).",
+        )
+
+    # --- Règle 2 : état courant bloquant ---
+    current = get_current_state(db, machine_id)
+    current_state = current.state if current else "MARCHE"
+
+    if current_state in _OPERATOR_BLOCKED_CURRENT:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Machine en {current_state} : "
+                + ("la maintenance doit prendre en charge l'erreur." if current_state == "ERREUR"
+                   else "la maintenance doit marquer la machine comme réparée.")
+            ),
+        )
+
+    # --- Règle 3 : transition valide ---
+    if (current_state, data.state) not in _VALID_TRANSITIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Transition {current_state} → {data.state} non autorisée.",
+        )
+
+    changed_by: str = current_user.get("sub", "inconnu")
+    comment = data.comment
+    if data.state == "ERREUR" and data.error_type:
+        comment = f"[{data.error_type}] {comment or ''}".strip()
+
+    result = change_state(db, machine_id, data.state, comment=comment, changed_by=changed_by)
+
+    # --- Notification maintenance si ERREUR ---
+    if data.state == "ERREUR":
+        try:
+            await _notify_maintenance_error(db, machine, declared_by=changed_by, comment=comment)
+        except Exception:
+            logger.exception("Erreur lors de la notification maintenance pour machine %s", machine_id)
+
+    return result
 
 
 @router.patch("/{machine_id}/state-history/{history_id}", response_model=StateHistoryResponse)
@@ -204,3 +301,9 @@ def close_machine_current_state(machine_id: int, db: Session = Depends(get_db)):
     if not updated:
         raise HTTPException(status_code=404, detail="Aucun état en cours à clôturer")
     return updated
+
+
+@router.post("/data", response_model=MachineDataResponse)
+def add_machine_data(data: MachineDataCreate, db: Session = Depends(get_db)):
+    """Recevoir data depuis simulation ou IoT"""
+    return create_machine_data(db, data)

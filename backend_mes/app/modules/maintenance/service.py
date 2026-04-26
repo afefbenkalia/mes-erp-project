@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.datetime_utc import utc_now_naive
 from app.modules.machines.model import Machine
 from app.modules.machines.model import MachineStateHistory
+from app.modules.machines.service import change_state as _machine_change_state
 
 from .model import (
     MachineOperationalState,
@@ -93,7 +94,7 @@ def list_history(db: Session, limit: int = 200) -> list[MaintenanceHistory]:
 
 
 def set_machine_error(
-    db: Session, machine_id: int
+    db: Session, machine_id: int, changed_by: str = "system"
 ) -> tuple[Machine, MachineOperationalStatus, bool]:
     machine = _get_machine_or_none(db, machine_id)
     if not machine:
@@ -102,24 +103,18 @@ def set_machine_error(
     status = ensure_machine_status(db, machine_id)
     open_intervention = _get_open_intervention(db, machine_id)
     if open_intervention:
-        # An intervention is already in progress: ignore duplicate error events
-        # and keep state bound to MAINTENANCE.
+        # Intervention already active — keep MAINTENANCE state, no duplicate event.
         if status.state != MachineOperationalState.MAINTENANCE:
-            status.state = MachineOperationalState.MAINTENANCE
-            status.last_update = utc_now_naive()
-            db.commit()
+            _machine_change_state(db, machine_id, MachineOperationalState.MAINTENANCE, changed_by=changed_by)
             db.refresh(status)
         return machine, status, False
 
-    previous_state = status.state
-
-    if previous_state == MachineOperationalState.ERREUR:
-        # Keep idempotent behavior: no timestamp update and no duplicate event.
+    if status.state == MachineOperationalState.ERREUR:
+        # Idempotent: already in error, nothing to do.
         return machine, status, False
 
-    status.state = MachineOperationalState.ERREUR
-    status.last_update = utc_now_naive()
-    db.commit()
+    # Transition → ERREUR (updates both MachineOperationalStatus and MachineStateHistory)
+    _machine_change_state(db, machine_id, MachineOperationalState.ERREUR, changed_by=changed_by)
     db.refresh(status)
     return machine, status, True
 
@@ -144,7 +139,6 @@ def take_over_machine(
 
     open_intervention = _get_open_intervention(db, machine_id)
     if open_intervention:
-        # Block duplicate "take over" actions while intervention is active.
         raise ValueError("Une intervention est déjà en cours pour cette machine")
 
     if status.state != MachineOperationalState.ERREUR:
@@ -156,11 +150,13 @@ def take_over_machine(
         status=MaintenanceInterventionStatus.EN_MAINTENANCE,
         start_time=utc_now_naive(),
     )
-    status.state = MachineOperationalState.MAINTENANCE
-    status.last_update = utc_now_naive()
-
     db.add(intervention)
-    db.commit()
+    # _machine_change_state commits — intervention is flushed as part of the same transaction
+    _machine_change_state(
+        db, machine_id, MachineOperationalState.MAINTENANCE,
+        comment=f"Prise en charge: {technician}",
+        changed_by=technician,
+    )
     db.refresh(status)
     db.refresh(intervention)
     return machine, status, intervention
@@ -203,21 +199,22 @@ def mark_machine_repaired(
         date=now,
         action_effectuee=action_effectuee,
     )
-    status.state = MachineOperationalState.MARCHE
-    status.last_update = now
-    preventive_in_progress = (
+    db.add(history)
+
+    for item in (
         db.query(PreventiveMaintenance)
-        .filter(
-            PreventiveMaintenance.machine_id == machine_id,
-            PreventiveMaintenance.status == "EN COURS",
-        )
+        .filter(PreventiveMaintenance.machine_id == machine_id, PreventiveMaintenance.status == "EN COURS")
         .all()
-    )
-    for item in preventive_in_progress:
+    ):
         item.status = "TERMINE"
 
-    db.add(history)
-    db.commit()
+    # FIX: machine arrêtée après réparation → PAUSE (pas MARCHE).
+    # L'opérateur relancera manuellement via PAUSE → MARCHE.
+    _machine_change_state(
+        db, machine_id, MachineOperationalState.PAUSE,
+        comment=f"Réparée: {action_effectuee[:100]}",
+        changed_by=technician,
+    )
     db.refresh(status)
     db.refresh(intervention)
     db.refresh(history)
@@ -380,9 +377,12 @@ def check_and_trigger_due_preventive_maintenance(db: Session) -> list[dict]:
             db.add(intervention)
             intervention_created = True
 
-        status.state = MachineOperationalState.MAINTENANCE
-        status.last_update = now
-        db.commit()
+        # Transition → MAINTENANCE (met à jour l'historique et le statut courant)
+        _machine_change_state(
+            db, item.machine_id, MachineOperationalState.MAINTENANCE,
+            comment=f"Maintenance préventive: {item.maintenance_type}",
+            changed_by="system",
+        )
         db.refresh(status)
         if intervention is not None:
             db.refresh(intervention)

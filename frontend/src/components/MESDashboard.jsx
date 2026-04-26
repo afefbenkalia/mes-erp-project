@@ -15,6 +15,7 @@ import UserManagement from "./UserManagement";
 import Machine from "./dashboard/Machine";
 import ProductionDashboard from "./dashboard/DashboardMes/ProductionDashboard";
 import MaintenanceDashboard from "./maintenance/MaintenanceDashboard";
+import Operateur from "./operateur/Operateur";
 
 const ROLE_CONFIG = {
   admin: {
@@ -30,12 +31,14 @@ const ROLE_CONFIG = {
     modules: ["maintenance"],
   },
   operateur: {
-    defaultModule: "production",
-    modules: ["production", "machine"],
+    defaultModule: "operateur",
+    modules: ["operateur"],
   },
 };
 
 const ROLE_TO_CONFIG_KEY = {
+  operator: "operateur",
+  operateur: "operateur",
   responsable_maintenance: "maintenance",
 };
 
@@ -47,6 +50,7 @@ const MODULE_CONFIG = {
   machine: { label: "Machine", icon: <Cpu size={16} />, component: Machine },
   maintenance: { label: "Maintenance", icon: <Wrench size={16} />, component: MaintenanceDashboard },
   users: { label: "User Management", icon: "👤", component: UserManagement },
+  operateur: { label: "Operateur", icon: "👷", component: Operateur },
 };
 
 const MESDashboard = () => {
@@ -72,14 +76,14 @@ const MESDashboard = () => {
   if (!user) return null;
 
   const role = user.role;
+  const configKey = ROLE_TO_CONFIG_KEY[role] || role;
+  const roleConfig = ROLE_CONFIG[configKey];
 
   const handleLogout = () => {
     localStorage.clear();
     window.location.href = "/login";
   };
 
-  const configKey = ROLE_TO_CONFIG_KEY[role] || role;
-  const roleConfig = ROLE_CONFIG[configKey];
   const menu = (roleConfig?.modules || []).map((moduleId) => ({
     id: moduleId,
     label: MODULE_CONFIG[moduleId]?.label || moduleId,
@@ -102,6 +106,8 @@ const MESDashboard = () => {
         return <Machine />;
       case "users":
         return <UserManagement />;
+      case "operateur":
+        return <Operateur />;
       default:
         return <h2>Module not found</h2>;
     }

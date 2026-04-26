@@ -1,20 +1,3 @@
-"""
-Realistic MES MQTT simulator.
-
-Publishes:
-- mes/machines/{id}/data
-- mes/metrics/global
-
-Run:
-    python simulation.py --start
-Stop:
-    Ctrl+C
-
-Dependency:
-    pip install paho-mqtt
-"""
-
-
 from __future__ import annotations
 
 import argparse
@@ -22,13 +5,11 @@ import json
 import random
 import signal
 import time
-import urllib.error
-import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Dict
 
+import requests
 import paho.mqtt.client as mqtt
 
 
@@ -37,307 +18,181 @@ BROKER_PORT = 1883
 GLOBAL_TOPIC = "mes/metrics/global"
 MACHINE_TOPIC_TEMPLATE = "mes/machines/{id}/data"
 
-MACHINE_IDS = ["M1", "M2", "M3", "M4"]
-STATE_CHOICES = ["MARCHE", "PAUSE", "ERREUR"]
-NON_RUNNING_STATES = {"PAUSE", "ERREUR"}
-
 PUBLISH_INTERVAL_SECONDS = 2
-STATE_CHANGE_WINDOW_SECONDS = (10, 30)
 DEFAULT_MACHINES_API_URL = "http://127.0.0.1:8000/api/machines"
-DEFAULT_MAINTENANCE_ERROR_URL = "http://127.0.0.1:8000/api/maintenance/simulation/error"
 
 
+# 🧠 Machine simulation
 @dataclass
 class MachineSim:
     machine_id: str
-    state: str = "MARCHE"
-    runtime_minutes: float = 0.0
-    downtime_minutes: float = 0.0
+    machine_type: str = "generic"
+    state: str = "PAUSE"
     production: int = 0
-    rejects: int = 0
-    temperature: float = 75.0
-    pressure: float = 6.2
-    speed: int = 1100
-    current_of: str = "OF-1001"
-    expected_production_per_minute: float = 6.0
-    next_state_change_at: float = field(default_factory=lambda: 0.0)
+    temperature: float = 70.0
+    speed: int = 1000
 
-    def __post_init__(self) -> None:
-        self.schedule_next_state_change()
+    # ✅ نجيب state من backend (operator)
+    def fetch_state(self):
+        try:
+            res = requests.get(
+            f"http://127.0.0.1:8000/api/machines/{self.machine_id}/state",
+            timeout=1
+        )
+            data = res.json()
+            return data.get("state", "PAUSE")
+        except:
+            return "PAUSE"
 
-    def schedule_next_state_change(self) -> None:
-        delay = random.randint(*STATE_CHANGE_WINDOW_SECONDS)
-        self.next_state_change_at = time.time() + delay
+    def update_behavior(self):
+        if self.machine_type == "Injection":
+            self.temperature = random.uniform(80, 120)
+            self.speed = random.randint(500, 900)
 
-    def maybe_change_state(self) -> None:
-        now = time.time()
-        if now < self.next_state_change_at:
-            return
+        elif self.machine_type == "Nettoyeuse":
+            self.temperature = random.uniform(30, 50)
+            self.speed = random.randint(1000, 1500)
 
-        # Bonus: occasional forced failure.
-        if random.random() < 0.12:
-            next_state = "ERREUR"
+        elif self.machine_type == "Condenseur":
+            self.temperature = random.uniform(20, 40)
+            self.speed = random.randint(300, 600)
+
+        elif self.machine_type == "Cardage":
+            self.temperature = random.uniform(50, 70)
+            self.speed = random.randint(800, 1200)
+
+        elif self.machine_type == "Séchage":
+            self.temperature = random.uniform(90, 130)
+            self.speed = random.randint(400, 700)
+
+        elif self.machine_type == "Bobinage":
+            self.temperature = random.uniform(40, 60)
+            self.speed = random.randint(900, 1400)
+
         else:
-            weighted_states = [
-                ("MARCHE", 0.68),
-                ("PAUSE", 0.24),
-                ("ERREUR", 0.08),
-            ]
-            r = random.random()
-            cumulative = 0.0
-            next_state = self.state
-            for s, w in weighted_states:
-                cumulative += w
-                if r <= cumulative:
-                    next_state = s
-                    break
+            self.temperature = random.uniform(60, 80)
+            self.speed = random.randint(800, 1200)
 
-        if next_state != self.state:
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] "
-                f"{self.machine_id} state change: {self.state} -> {next_state}"
-            )
-            self.state = next_state
-
-            if self.state == "MARCHE" and random.random() < 0.35:
-                # New order id when resuming production.
-                self.current_of = f"OF-{random.randint(1001, 9999)}"
-
-        self.schedule_next_state_change()
-
-
-    def tick(self, interval_seconds: int) -> None:
-        self.maybe_change_state()
-
-        delta_minutes = interval_seconds / 60.0
-        if self.state == "MARCHE":
-            self.runtime_minutes += delta_minutes
-        else:
-            self.downtime_minutes += delta_minutes
+    def tick(self):
+        # ✅ state من operator
+        self.state = self.fetch_state()
 
         if self.state == "MARCHE":
-            produced_now = random.randint(6, 18)
-            self.production += produced_now
-            self.rejects += random.randint(0, 2)
-            self.speed = random.randint(800, 1500)
-            self.temperature = round(random.uniform(70.0, 90.0), 1)
-        elif self.state == "PAUSE":
-            self.speed = 0
-            self.temperature = round(random.uniform(30.0, 50.0), 1)
-        else:  # ERREUR
-            self.speed = 0
-            self.temperature = round(random.uniform(60.0, 95.0), 1)
+            self.production += random.randint(5, 20)
 
-        self.pressure = round(random.uniform(5.0, 8.0), 2)
+        self.update_behavior()
 
-    def to_payload(self) -> dict:
-        payload = {
-            "machineId": self.machine_id,
+    def to_payload(self):
+        return {
+            "machine_reference": self.machine_id,
             "state": self.state,
-            "runtime_minutes": round(self.runtime_minutes, 2),
-            "downtime_minutes": round(self.downtime_minutes, 2),
-            "production": self.production,
-            "rejects": self.rejects,
-            "temperature": self.temperature,
-            "pressure": self.pressure,
+            "temperature": round(self.temperature, 1),
             "speed": self.speed,
-            "current_of": self.current_of,
+            "vibration": round(random.uniform(0.01, 0.05), 3),
+            "production": self.production,
         }
 
-        # Extra signal for monitoring without breaking existing UI.
-        if self.temperature > 85:
-            payload["warning"] = "HIGH_TEMPERATURE"
 
-        return payload
+# 🧠 load machines depuis API
+def load_machines(api_url: str):
+    try:
+        with urllib.request.urlopen(api_url) as response:
+            data = json.loads(response.read().decode())
+
+        machines = {}
+
+        for item in data:
+            ref = item.get("reference")
+            type_ = item.get("machine_type", "generic")
+
+            if ref:
+                machines[ref] = MachineSim(
+                    machine_id=ref,
+                    machine_type=type_
+                )
+
+        print(f"✅ Loaded {len(machines)} machines from DB")
+        return machines
+
+    except Exception as e:
+        print("❌ API error:", e)
+        return {}
 
 
-def compute_global_metrics(machines: Dict[str, MachineSim]) -> dict:
-    total_runtime = sum(m.runtime_minutes for m in machines.values())
-    total_downtime = sum(m.downtime_minutes for m in machines.values())
-    total_production = sum(m.production for m in machines.values())
-    total_rejects = sum(m.rejects for m in machines.values())
-    total_expected = sum(
-        max(m.runtime_minutes * m.expected_production_per_minute, 1.0)
-        for m in machines.values()
-    )
-
-    availability = (
-        (total_runtime / (total_runtime + total_downtime)) * 100
-        if (total_runtime + total_downtime) > 0
-        else 0.0
-    )
-    performance = (total_production / total_expected) * 100 if total_expected > 0 else 0.0
-    quality = (
-        ((total_production - total_rejects) / total_production) * 100
-        if total_production > 0
-        else 0.0
-    )
-    oee = (availability / 100.0) * (performance / 100.0) * (quality / 100.0) * 100.0
-    trs = oee
+# 🧠 global metrics
+def compute_global(machines: Dict[str, MachineSim]):
+    total_prod = sum(m.production for m in machines.values())
 
     return {
-        "availability": round(max(0.0, min(availability, 100.0)), 2),
-        "performance": round(max(0.0, min(performance, 100.0)), 2),
-        "quality": round(max(0.0, min(quality, 100.0)), 2),
-        "oee": round(max(0.0, min(oee, 100.0)), 2),
-        "trs": round(max(0.0, min(trs, 100.0)), 2),
+        "total_production": total_prod,
+        "machines": len(machines)
     }
 
 
-def load_machine_identifiers(api_url: str, limit: int = 4) -> List[str]:
-    """
-    Fetch machine references from API so MQTT machineId matches frontend DB identifiers.
-    Falls back to M1..M4 if API is unavailable.
-    """
-    query = urllib.parse.urlencode({"include_current_state": "true", "limit": str(max(limit, 1))})
-    url = f"{api_url}?{query}"
-
-    try:
-        with urllib.request.urlopen(url, timeout=4) as response:
-            payload = response.read().decode("utf-8")
-        data = json.loads(payload)
-        if not isinstance(data, list):
-            raise ValueError("Machines API did not return a list")
-
-        references = []
-        for item in data:
-            ref = str((item or {}).get("reference", "")).strip()
-            if ref:
-                references.append(ref)
-            if len(references) >= limit:
-                break
-
-        if references:
-            print(f"Loaded machine references from API: {', '.join(references)}")
-            return references
-
-        print("Machines API returned no references. Using fallback IDs.")
-        return MACHINE_IDS[:limit]
-    except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as error:
-        print(f"Could not load machines from API ({error}). Using fallback IDs: {', '.join(MACHINE_IDS[:limit])}")
-        return MACHINE_IDS[:limit]
-    
-
-def notify_backend_error(maintenance_error_url: str, machine_reference: str) -> None:
-    payload = json.dumps({"machine_reference": machine_reference}).encode("utf-8")
-    req = urllib.request.Request(
-        maintenance_error_url,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=4):
-            pass
-    except Exception as error:
-        print(f"Could not notify backend for machine {machine_reference}: {error}")
-
-
-def run_simulation(api_url: str, maintenance_error_url: str) -> None:
-    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="mes-simulator")
-    client.connect(BROKER_HOST, BROKER_PORT, keepalive=60)
+# 🚀 simulation loop
+def run(api_url: str):
+    client = mqtt.Client()
+    client.connect(BROKER_HOST, BROKER_PORT)
     client.loop_start()
 
-    machine_identifiers = load_machine_identifiers(api_url=api_url, limit=4)
-    machines = {mid: MachineSim(machine_id=mid) for mid in machine_identifiers}
+    machines = load_machines(api_url)
 
     running = True
-    last_refresh = time.time()  # 🆕 وقت آخر refresh
 
-    def stop_handler(_sig, _frame):
+    def stop(sig, frame):
         nonlocal running
         running = False
-        print("\nStopping simulator...")
 
-    signal.signal(signal.SIGINT, stop_handler)
-    signal.signal(signal.SIGTERM, stop_handler)
+    signal.signal(signal.SIGINT, stop)
 
-    print("MES simulator started.")
-    print(f"Broker: {BROKER_HOST}:{BROKER_PORT}")
-    print(f"Publishing every {PUBLISH_INTERVAL_SECONDS}s for: {', '.join(machine_identifiers)}")
+    print("🚀 Simulation started...")
 
     while running:
 
-        # 🔄 refresh machines كل 30 ثانية
-        if time.time() - last_refresh > 30:
-            print("🔄 Reloading machines from API...")
-            new_ids = load_machine_identifiers(api_url=api_url, limit=10)
+        # 🔄 reload machines
+        if random.random() < 0.05:
+            machines.update(load_machines(api_url))
 
-            # ➕ إضافة machines الجديدة
-            for mid in new_ids:
-                if mid not in machines:
-                    print(f"🆕 New machine detected: {mid}")
-                    machines[mid] = MachineSim(machine_id=mid)
+        for m in machines.values():
+            m.tick()
+            payload = m.to_payload()
 
-            last_refresh = time.time()
+            # 📡 MQTT
+            topic = MACHINE_TOPIC_TEMPLATE.format(id=m.machine_id)
+            client.publish(topic, json.dumps(payload))
 
-        # 🔁 simulation normale
-        for machine in machines.values():
-            previous_state = machine.state
-            machine.tick(PUBLISH_INTERVAL_SECONDS)
-            payload = machine.to_payload()
-            topic = MACHINE_TOPIC_TEMPLATE.format(id=machine.machine_id)
-
-            client.publish(topic, json.dumps(payload), qos=0, retain=False)
-
-            temp_warn = " ⚠ HIGH TEMP" if payload.get("warning") else ""
-            print(
-                f"[{datetime.now().strftime('%H:%M:%S')}] {topic} "
-                f"state={payload['state']} runtime={payload['runtime_minutes']}m "
-                f"downtime={payload['downtime_minutes']}m prod={payload['production']} "
-                f"rej={payload['rejects']} temp={payload['temperature']}C{temp_warn}"
-            )
-
-            if previous_state != "ERREUR" and machine.state == "ERREUR":
-                notify_backend_error(
-                    maintenance_error_url=maintenance_error_url,
-                    machine_reference=machine.machine_id,
+            # 🗄️ API → DB
+            try:
+                requests.post(
+                    "http://127.0.0.1:8000/api/machines/data",
+                    json=payload,
+                    timeout=1
                 )
+            except:
+                pass
 
-        # 🌍 global metrics
-        global_payload = compute_global_metrics(machines)
-        client.publish(GLOBAL_TOPIC, json.dumps(global_payload), qos=0, retain=False)
+            print(f"{m.machine_id} | {m.machine_type} | {m.state} | prod={m.production}")
 
-        print(
-            f"[{datetime.now().strftime('%H:%M:%S')}] {GLOBAL_TOPIC} "
-            f"oee={global_payload['oee']} avail={global_payload['availability']} "
-            f"perf={global_payload['performance']} qual={global_payload['quality']}"
-        )
+        global_payload = compute_global(machines)
+        client.publish(GLOBAL_TOPIC, json.dumps(global_payload))
 
         time.sleep(PUBLISH_INTERVAL_SECONDS)
 
     client.loop_stop()
     client.disconnect()
-    print("MES simulator stopped.")
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="MES MQTT realistic simulator")
-    parser.add_argument(
-        "--start",
-        action="store_true",
-        help="Start simulation loop (required to run).",
-    )
-    parser.add_argument(
-        "--machines-api-url",
-        default=DEFAULT_MACHINES_API_URL,
-        help=f"Machines API URL used to fetch references (default: {DEFAULT_MACHINES_API_URL})",
-    )
-    parser.add_argument(
-        "--maintenance-error-url",
-        default=DEFAULT_MAINTENANCE_ERROR_URL,
-        help=f"Maintenance error URL (default: {DEFAULT_MAINTENANCE_ERROR_URL})",
-    )
+
+# ▶️ main
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--start", action="store_true")
     args = parser.parse_args()
 
-    if not args.start:
-        print("Simulation is disabled. Use --start to run.")
-        return
-    run_simulation(
-        api_url=args.machines_api_url,
-        maintenance_error_url=args.maintenance_error_url,
-    )
+    if args.start:
+        run(DEFAULT_MACHINES_API_URL)
+    else:
+        print("Use --start")
 
 
 if __name__ == "__main__":
     main()
-

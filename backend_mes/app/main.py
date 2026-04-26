@@ -2,13 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, SessionLocal, engine
 from app.core.ensure_schema import (
+    ensure_machine_state_history_changed_by,
+    ensure_machines_reference_not_unique,
     ensure_preventive_maintenance_columns,
     ensure_productions_of_id_column,
     ensure_users_hashed_password_column,
     ensure_users_activity_columns,
 )
 from app.core.config import settings
-
+from app.modules.operator.router import router as operator_router
 # Import des routers
 from app.modules.production.router import router as production_router
 from app.modules.dashboard.router import router as dashboard_router
@@ -49,6 +51,8 @@ ensure_users_hashed_password_column()
 ensure_users_activity_columns()
 ensure_productions_of_id_column()
 ensure_preventive_maintenance_columns()
+ensure_machines_reference_not_unique()
+ensure_machine_state_history_changed_by()
 
 # Routers - IMPORTANT: Le préfixe est "/auth" une seule fois
 app.include_router(auth_router, prefix="/auth")
@@ -58,6 +62,7 @@ app.include_router(dashboard_router, prefix="/api")
 app.include_router(traceability_router, prefix="/api")
 app.include_router(machine_router, prefix="/api")
 app.include_router(maintenance_router, prefix="/api")
+app.include_router(operator_router, prefix="/api")
 @app.get("/")
 def root():
     return {"message": "Backend MES ERP fonctionne !"}
