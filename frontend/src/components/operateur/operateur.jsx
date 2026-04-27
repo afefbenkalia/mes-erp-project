@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  ClipboardList,
-  Factory,
   PauseCircle,
   PlayCircle,
   RefreshCw,
@@ -13,12 +11,6 @@ import {
 } from "lucide-react";
 import { maintenanceAPI, machineAPI } from "../../api/api";
 
-const TABS = [
-  { id: "production", label: "Production", icon: Factory },
-  { id: "ordres", label: "Ordres de fabrication", icon: ClipboardList },
-  { id: "rebuts", label: "Rebuts", icon: AlertTriangle },
-  { id: "machines", label: "Machines", icon: Settings2 },
-];
 
 const STATUS = {
   MARCHE: {
@@ -113,16 +105,8 @@ function Kpi({ label, value, tone = "slate" }) {
   );
 }
 
-function EmptyTab({ title }) {
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-10 text-center text-sm font-medium text-slate-500 shadow-sm">
-      {title}
-    </section>
-  );
-}
 
 export default function Operateur() {
-  const [activeTab, setActiveTab] = useState("machines");
   const [machines, setMachines] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -160,12 +144,10 @@ export default function Operateur() {
   };
 
   useEffect(() => {
-    if (activeTab !== "machines") return undefined;
-
     fetchMachines(false);
     const timer = setInterval(() => fetchMachines(true), 7000);
     return () => clearInterval(timer);
-  }, [activeTab]);
+  }, []);
 
   const selectedMachine = useMemo(() => {
     return machines.find((m) => String(m.machine_id) === String(selectedId)) || null;
@@ -350,46 +332,21 @@ export default function Operateur() {
     <div className="min-h-screen bg-[#f5f7fb] p-4 sm:p-6">
       <div className="mx-auto max-w-[1450px] space-y-4">
         <header className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm sm:px-5 sm:py-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="rounded-lg bg-[#0a6ed1] p-2 text-white">
-                <Factory className="h-4.5 w-4.5" />
+                <Settings2 className="h-4 w-4" />
               </div>
-              <h1 className="text-lg font-semibold text-slate-900">Operateur</h1>
+              <h1 className="text-lg font-semibold text-slate-900">Machines</h1>
             </div>
             <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
               <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
               Live
             </div>
           </div>
-
-          <nav className="mt-4 flex items-center gap-2 overflow-x-auto pb-1">
-            {TABS.map((tab) => {
-              const Icon = tab.icon;
-              const active = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-medium transition ${
-                    active
-                      ? "border-[#0a6ed1] bg-[#0a6ed1] text-white"
-                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  <Icon className="h-4 w-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </nav>
         </header>
 
-        {activeTab === "machines" && renderMachines()}
-        {activeTab === "production" && <EmptyTab title="Production" />}
-        {activeTab === "ordres" && <EmptyTab title="Ordres de fabrication" />}
-        {activeTab === "rebuts" && <EmptyTab title="Rebuts" />}
+        {renderMachines()}
       </div>
     </div>
   );

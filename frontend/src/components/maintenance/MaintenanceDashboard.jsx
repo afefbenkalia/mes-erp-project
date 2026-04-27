@@ -49,11 +49,6 @@ const PREVENTIVE_STATUS_ICONS = {
   TERMINE: CheckCircle2,
 };
 
-const TAB_STYLES = {
-  active: "border-slate-900 bg-slate-900 text-white shadow-sm",
-  idle: "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
-};
-
 const formatDate = (value) => {
   if (!value) return "-";
   return new Date(value).toLocaleString("fr-FR");
@@ -167,7 +162,7 @@ const FilterBar = ({ filters, onFilterChange, fields }) => (
   </div>
 );
 
-export default function MaintenanceDashboard() {
+export default function MaintenanceDashboard({ activeTab = "dashboard" }) {
   const [machines, setMachines] = useState([]);
   const [interventions, setInterventions] = useState([]);
   const [history, setHistory] = useState([]);
@@ -196,7 +191,6 @@ export default function MaintenanceDashboard() {
   });
   const [wsStatus, setWsStatus] = useState("disconnected");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState("dashboard");
   const [preventiveForm, setPreventiveForm] = useState({
     machine_id: "",
     maintenance_type: "",
@@ -207,12 +201,6 @@ export default function MaintenanceDashboard() {
   const [preventiveFormMode, setPreventiveFormMode] = useState("create");
   const [editingPreventiveId, setEditingPreventiveId] = useState(null);
   const [preventiveViewMode, setPreventiveViewMode] = useState("cards");
-  const tabs = [
-    { id: "dashboard", label: "Dashboard" },
-    { id: "interventions", label: "Interventions" },
-    { id: "historique", label: "Historique" },
-    { id: "preventive", label: "Préventive" },
-  ];
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -679,14 +667,6 @@ export default function MaintenanceDashboard() {
               Les 5 dernières réparations effectuées avec leur durée et technicien.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setActiveTab("historique")}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            <Clock3 className="h-4 w-4" />
-            Voir tout l'historique
-          </button>
         </div>
 
         {recentHistory.length > 0 ? (
@@ -1337,19 +1317,6 @@ export default function MaintenanceDashboard() {
             </div>
           </div>
 
-          <div className="relative mt-6 flex flex-wrap gap-2">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setActiveTab(tab.id)}
-                className={`rounded-full border px-4 py-2 text-sm font-medium transition ${activeTab === tab.id ? TAB_STYLES.active : TAB_STYLES.idle
-                  }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
         </section>
 
         <div className="space-y-6">

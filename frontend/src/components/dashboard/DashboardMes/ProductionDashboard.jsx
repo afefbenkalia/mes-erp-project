@@ -265,7 +265,7 @@ export default function ProductionDashboard() {
   const k = data?.kpis || DEMO_PAYLOAD.kpis;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-7 px-4 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-slate-900">

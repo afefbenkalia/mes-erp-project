@@ -30,6 +30,19 @@ const OPERATEURS   = ["Jean Dupont","Marie Martin","Pierre Durand","Sophie Lefeb
 const TYPES_DEFAUT = ["Néppes","Impuretés","Casses","Irrégularité","Souillure","Autre défaut"];
 const NB_ETAPES    = SEQUENCE_MACHINES.length;
 
+// ── Role-based access ─────────────────────────────────────────────────────────
+
+const TAB_CONFIG = [
+  { id: "lancer",     label: "🚀 Lancer Production", roles: ["operator"] },
+  { id: "pipeline",   label: "⚙️ Pipeline",           roles: ["operator"] },
+  { id: "rebuts",     label: "⚠️ Rebuts",             roles: ["operator"] },
+  { id: "historique", label: "📋 Historique",         roles: ["manager", "admin"] },
+];
+
+/** True if `role` is allowed to see `tabId`. */
+const canAccess = (tabId, role) =>
+  TAB_CONFIG.find(t => t.id === tabId)?.roles.includes(role) ?? false;
+
 const generateSimulatedStep = (stepOrder, qteEntree, isFirst, isLast, targetPF) => {
   let qteSortie;
   if (isLast) {
@@ -48,8 +61,10 @@ const generateSimulatedStep = (stepOrder, qteEntree, isFirst, isLast, targetPF) 
   };
 };
 
-const Production = () => {
-  const [activeTab, setActiveTab]         = useState("lancer");
+const Production = ({ role = "operator" }) => {
+  const visibleTabs = TAB_CONFIG.filter(t => canAccess(t.id, role));
+
+  const [activeTab, setActiveTab] = useState(() => visibleTabs[0]?.id ?? "lancer");
   const [productions, setProductions]     = useState([]);
   const [rebuts, setRebuts]               = useState([]);
   const [ofs, setOfs]                     = useState([]);
@@ -355,6 +370,11 @@ const Production = () => {
     return Math.round((done / NB_ETAPES) * 100);
   }, [selectedProd]);
 
+  // Guard: reset to first allowed tab if state was tampered (e.g. DevTools)
+  const safeActiveTab = visibleTabs.some(t => t.id === activeTab)
+    ? activeTab
+    : (visibleTabs[0]?.id ?? "");
+
   return (
     <div style={s.container}>
       {/* ══ HEADER ══ */}
@@ -426,16 +446,11 @@ const Production = () => {
       {successMsg && <div style={s.successBanner}>{successMsg}</div>}
       {errorMsg   && <div style={s.errorBanner}>{errorMsg}</div>}
 
-      {/* ══ TABS ══ */}
+      {/* ══ TABS (role-filtered) ══ */}
       <div style={s.tabs}>
-        {[
-          { id:"lancer",     label:"🚀 Lancer Production" },
-          { id:"pipeline",   label:"⚙️ Pipeline"          },
-          { id:"rebuts",     label:"⚠️ Rebuts"            },
-          { id:"historique", label:"📋 Historique"        },
-        ].map(t => (
+        {visibleTabs.map(t => (
           <button key={t.id}
-            style={{ ...s.tabBtn, ...(activeTab === t.id ? s.tabActive : s.tabInactive) }}
+            style={{ ...s.tabBtn, ...(safeActiveTab === t.id ? s.tabActive : s.tabInactive) }}
             onClick={() => { setActiveTab(t.id); setSuccessMsg(""); setErrorMsg(""); }}>
             {t.label}
           </button>
@@ -445,7 +460,7 @@ const Production = () => {
       <div style={s.card}>
 
         {/* ══ LANCER ══ */}
-        {activeTab === "lancer" && (
+        {safeActiveTab === "lancer" && canAccess("lancer", role) && (
           <div>
             <h2 style={s.sectionTitle}>🚀 Lancer une nouvelle production</h2>
             <p style={s.sectionSub}>
@@ -507,7 +522,7 @@ const Production = () => {
         )}
 
         {/* ══ PIPELINE ══ */}
-        {activeTab === "pipeline" && (
+        {safeActiveTab === "pipeline" && canAccess("pipeline", role) && (
           <div>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem" }}>
               <h2 style={s.sectionTitle}>⚙️ Pipeline de Production</h2>
@@ -599,7 +614,7 @@ const Production = () => {
         )}
 
         {/* ══ REBUTS ══ */}
-        {activeTab === "rebuts" && (
+        {safeActiveTab === "rebuts" && canAccess("rebuts", role) && (
           <div>
             <h2 style={s.sectionTitle}>⚠️ Enregistrement des Rebuts</h2>
             <p style={s.sectionSub}>Rattachez un rebut à une production et une machine spécifique.</p>
@@ -676,7 +691,7 @@ const Production = () => {
         )}
 
         {/* ══ HISTORIQUE ══ */}
-        {activeTab === "historique" && (
+        {safeActiveTab === "historique" && canAccess("historique", role) && (
           <div>
             <h2 style={s.sectionTitle}>📋 Historique des Productions</h2>
             <p style={s.sectionSub}>Vue d'ensemble de toutes les productions et leur progression.</p>

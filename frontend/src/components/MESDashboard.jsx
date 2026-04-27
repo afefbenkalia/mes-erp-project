@@ -1,202 +1,598 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
-  LayoutDashboard,
-  Cpu,
+  AlertTriangle,
+  Bell,
+  CalendarClock,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
-  Search,
+  Clock3,
+  Factory,
+  Gauge,
+  GitMerge,
+  HardDrive,
+  History,
+  LayoutDashboard,
   LogOut,
-  Wrench
+  Search,
+  SlidersHorizontal,
+  Users,
+  Wrench,
+  X,
+  Zap,
 } from "lucide-react";
 
-import Production from "./dashboard/Production";
-import OrdresFabrication from "./dashboard/OrdresFabrication";
-import Traceability from "./dashboard/Traceability";
-import UserManagement from "./UserManagement";
-import Machine from "./dashboard/Machine";
-import ProductionDashboard from "./dashboard/DashboardMes/ProductionDashboard";
-import MaintenanceDashboard from "./maintenance/MaintenanceDashboard";
-import Operateur from "./operateur/Operateur";
+import Production            from "./dashboard/Production";
+import OrdresFabrication     from "./dashboard/OrdresFabrication";
+import Traceability           from "./dashboard/Traceability";
+import UserManagement         from "./UserManagement";
+import Machine                from "./dashboard/Machine";
+import ProductionDashboard    from "./dashboard/DashboardMes/ProductionDashboard";
+import MaintenanceDashboard   from "./maintenance/MaintenanceDashboard";
+import Operateur              from "./operateur/Operateur";
 
+/* ─────────────────────────────────────────
+   ROLE / MODULE CONFIGURATION
+───────────────────────────────────────── */
 const ROLE_CONFIG = {
-  admin: {
-    defaultModule: "users",
-    modules: ["users"],
-  },
-  manager: {
-    defaultModule: "dashboard",
-    modules: ["dashboard", "production", "ordres", "traceability", "machine"],
-  },
-  maintenance: {
-    defaultModule: "maintenance",
-    modules: ["maintenance"],
-  },
-  operateur: {
-    defaultModule: "operateur",
-    modules: ["operateur"],
-  },
+  admin:       { defaultModule: "users",                 modules: ["users"] },
+  manager:     { defaultModule: "dashboard",             modules: ["dashboard","production","ordres","traceability","machine"] },
+  maintenance: { defaultModule: "maintenance-dashboard", modules: ["maintenance-dashboard","maintenance-interventions","maintenance-historique","maintenance-preventive"] },
+  operateur:   { defaultModule: "production",            modules: ["production","ordres","operateur"] },
 };
 
 const ROLE_TO_CONFIG_KEY = {
-  operator: "operateur",
-  operateur: "operateur",
+  operator:                "operateur",
+  operateur:               "operateur",
   responsable_maintenance: "maintenance",
 };
 
+const S = 18; // uniform sidebar icon size
+
 const MODULE_CONFIG = {
-  dashboard: { label: "Dashboard", icon: <LayoutDashboard size={16} />, component: ProductionDashboard },
-  production: { label: "Production", icon: <Cpu size={16} />, component: Production },
-  ordres: { label: "Ordres Fabrication", icon: <ClipboardList size={16} />, component: OrdresFabrication },
-  traceability: { label: "Traceability", icon: <Search size={16} />, component: Traceability },
-  machine: { label: "Machine", icon: <Cpu size={16} />, component: Machine },
-  maintenance: { label: "Maintenance", icon: <Wrench size={16} />, component: MaintenanceDashboard },
-  users: { label: "User Management", icon: "👤", component: UserManagement },
-  operateur: { label: "Operateur", icon: "👷", component: Operateur },
+  dashboard:                   { label: "Dashboard",     icon: <LayoutDashboard size={S} />, component: ProductionDashboard },
+  production:                  { label: "Production",    icon: <Factory size={S} />,         component: Production },
+  ordres:                      { label: "Ordres Fab.",   icon: <ClipboardList size={S} />,   component: OrdresFabrication },
+  traceability:                { label: "Traçabilité",   icon: <GitMerge size={S} />,        component: Traceability },
+  machine:                     { label: "Machines",      icon: <HardDrive size={S} />,       component: Machine },
+  "maintenance-dashboard":     { label: "Dashboard",     icon: <LayoutDashboard size={S} />, component: MaintenanceDashboard },
+  "maintenance-interventions": { label: "Interventions", icon: <Zap size={S} />,             component: MaintenanceDashboard },
+  "maintenance-historique":    { label: "Historique",    icon: <History size={S} />,         component: MaintenanceDashboard },
+  "maintenance-preventive":    { label: "Préventive",    icon: <CalendarClock size={S} />,   component: MaintenanceDashboard },
+  users:                       { label: "Utilisateurs",  icon: <Users size={S} />,           component: UserManagement },
+  operateur:                   { label: "Machines",      icon: <SlidersHorizontal size={S} />, component: Operateur },
 };
 
-const MESDashboard = () => {
-  const [user, setUser] = useState(null);
-  const [activeModule, setActiveModule] = useState("");
+const ROLE_LABELS = {
+  admin:                   "Administrateur",
+  manager:                 "Manager",
+  maintenance:             "Maintenance",
+  operateur:               "Opérateur",
+  operator:                "Opérateur",
+  responsable_maintenance: "Resp. Maintenance",
+};
+
+const ROLE_COLORS = {
+  admin:                   { bg: "#fef3c7", text: "#92400e", border: "#fde68a" },
+  manager:                 { bg: "#eff6ff", text: "#1d4ed8", border: "#bfdbfe" },
+  maintenance:             { bg: "#fff7ed", text: "#c2410c", border: "#fed7aa" },
+  responsable_maintenance: { bg: "#fff7ed", text: "#c2410c", border: "#fed7aa" },
+  operateur:               { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0" },
+  operator:                { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0" },
+};
+
+/* static demo notifications — replace with API in production */
+const DEMO_NOTIFS = [
+  { id: 1, title: "Machine M-003 — Erreur critique", time: "Il y a 4 min",  dot: "#ef4444" },
+  { id: 2, title: "Maintenance préventive planifiée", time: "Il y a 22 min", dot: "#f59e0b" },
+  { id: 3, title: "Intervention M-007 clôturée",     time: "Il y a 1 h",    dot: "#22c55e" },
+];
+
+const SIDEBAR_W_OPEN  = 244;
+const SIDEBAR_W_CLOSE = 62;
+const NAVBAR_H        = 62;
+
+/* ─────────────────────────────────────────
+   COMPONENT
+───────────────────────────────────────── */
+export default function MESDashboard() {
+  const [user,          setUser]         = useState(null);
+  const [activeModule,  setActiveModule] = useState("");
+  const [sidebarOpen,   setSidebarOpen]  = useState(true);
+  const [currentTime,   setCurrentTime]  = useState(new Date());
+  const [searchQuery,   setSearchQuery]  = useState("");
+  const [notifOpen,     setNotifOpen]    = useState(false);
+  const [notifs,        setNotifs]       = useState(DEMO_NOTIFS);
+
+  const notifRef = useRef(null);
+
+  useEffect(() => {
+    const id = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) setNotifOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
 
   useEffect(() => {
     const stored = JSON.parse(localStorage.getItem("user"));
-
-    if (!stored) {
-      window.location.href = "/login";
-      return;
-    }
-
+    if (!stored) { window.location.href = "/login"; return; }
     setUser(stored);
-    console.log("ROLE:", stored.role);
-
-    const configKey = ROLE_TO_CONFIG_KEY[stored.role] || stored.role;
-    const roleConfig = ROLE_CONFIG[configKey];
-    setActiveModule(roleConfig?.defaultModule || "dashboard");
+    const key    = ROLE_TO_CONFIG_KEY[stored.role] || stored.role;
+    const config = ROLE_CONFIG[key];
+    setActiveModule(config?.defaultModule || "dashboard");
   }, []);
 
   if (!user) return null;
 
-  const role = user.role;
-  const configKey = ROLE_TO_CONFIG_KEY[role] || role;
+  const role       = user.role;
+  const configKey  = ROLE_TO_CONFIG_KEY[role] || role;
   const roleConfig = ROLE_CONFIG[configKey];
+  const roleLabel  = ROLE_LABELS[role]  || role;
+  const roleColor  = ROLE_COLORS[role]  || ROLE_COLORS.manager;
+  const initials   = (user.username || "?").slice(0, 2).toUpperCase();
 
-  const handleLogout = () => {
-    localStorage.clear();
-    window.location.href = "/login";
-  };
+  const handleLogout   = () => { localStorage.clear(); window.location.href = "/login"; };
+  const clearAllNotifs = () => { setNotifs([]); setNotifOpen(false); };
 
-  const menu = (roleConfig?.modules || []).map((moduleId) => ({
-    id: moduleId,
-    label: MODULE_CONFIG[moduleId]?.label || moduleId,
-    icon: MODULE_CONFIG[moduleId]?.icon || null,
+  const menu = (roleConfig?.modules || []).map((id) => ({
+    id,
+    label: MODULE_CONFIG[id]?.label || id,
+    icon:  MODULE_CONFIG[id]?.icon  || null,
   }));
 
   const renderContent = () => {
     switch (activeModule) {
-      case "maintenance":
-        return <MaintenanceDashboard />;
-      case "dashboard":
-        return <ProductionDashboard />;
-      case "production":
-        return <Production />;
-      case "ordres":
-        return <OrdresFabrication />;
-      case "traceability":
-        return <Traceability />;
-      case "machine":
-        return <Machine />;
-      case "users":
-        return <UserManagement />;
-      case "operateur":
-        return <Operateur />;
-      default:
-        return <h2>Module not found</h2>;
+      case "maintenance-dashboard":
+      case "maintenance-interventions":
+      case "maintenance-historique":
+      case "maintenance-preventive":
+        return <MaintenanceDashboard activeTab={activeModule.replace("maintenance-", "")} />;
+      case "dashboard":    return <ProductionDashboard />;
+      case "production":   return <Production role={role} />;
+      case "ordres":       return <OrdresFabrication />;
+      case "traceability": return <Traceability />;
+      case "machine":      return <Machine />;
+      case "users":        return <UserManagement />;
+      case "operateur":    return <Operateur />;
+      default:             return <div style={{ padding: 40, color: "#64748b", fontSize: 15 }}>Module introuvable.</div>;
     }
   };
 
+  const W = sidebarOpen ? SIDEBAR_W_OPEN : SIDEBAR_W_CLOSE;
+
+  const VDivider = () => (
+    <div style={{ width: 1, height: 24, background: "#e2e8f0", flexShrink: 0 }} />
+  );
+
   return (
-    <div style={styles.container}>
-      <aside style={styles.sidebar}>
-        <h2>🏭 MES</h2>
+    <div style={{
+      display: "flex", height: "100vh", overflow: "hidden",
+      fontFamily: "'Inter', 'Segoe UI', system-ui, sans-serif",
+      background: "#f1f5f9",
+    }}>
 
-        <p style={styles.sectionTitle}>MENU</p>
+      {/* ══════════════════════════════════════
+          SIDEBAR
+      ══════════════════════════════════════ */}
+      <aside style={{
+        width: W, minWidth: W,
+        background: "#0f172a",
+        display: "flex", flexDirection: "column",
+        transition: "width 0.22s cubic-bezier(.4,0,.2,1), min-width 0.22s cubic-bezier(.4,0,.2,1)",
+        overflow: "hidden",
+        boxShadow: "2px 0 20px rgba(0,0,0,0.28)",
+        zIndex: 20, flexShrink: 0,
+      }}>
 
-        {menu.map((item) => (
-          <div
-            key={item.id}
-            onClick={() => setActiveModule(item.id)}
+        {/* Brand / toggle */}
+        <div style={{
+          height: NAVBAR_H, flexShrink: 0,
+          display: "flex", alignItems: "center",
+          justifyContent: sidebarOpen ? "space-between" : "center",
+          padding: sidebarOpen ? "0 12px 0 16px" : "0",
+          borderBottom: "1px solid rgba(255,255,255,0.06)",
+        }}>
+          {sidebarOpen && (
+            <div style={{ display: "flex", alignItems: "center", gap: 11, overflow: "hidden", minWidth: 0 }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: 10, flexShrink: 0,
+                background: "linear-gradient(135deg,#3b82f6,#06b6d4)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 0 0 3px rgba(59,130,246,0.22)",
+              }}>
+                <Gauge size={19} color="white" />
+              </div>
+              <div style={{ overflow: "hidden", whiteSpace: "nowrap" }}>
+                <p style={{ color: "#f8fafc", fontWeight: 800, fontSize: 15, margin: 0, letterSpacing: "-0.03em" }}>MES Platform</p>
+                <p style={{ color: "#475569",  fontWeight: 500, fontSize: 11, margin: 0, letterSpacing: "0.02em" }}>Industrial Suite v2</p>
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={() => setSidebarOpen(o => !o)}
+            title={sidebarOpen ? "Réduire le menu" : "Étendre le menu"}
             style={{
-              ...styles.item,
-              background: activeModule === item.id ? "#1e293b" : "transparent"
+              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+              background: "rgba(255,255,255,0.05)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              cursor: "pointer", color: "#64748b",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              transition: "background 0.15s, color 0.15s",
             }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.1)";  e.currentTarget.style.color = "#94a3b8"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.color = "#64748b"; }}
           >
-            {item.icon} {item.label}
-          </div>
-        ))}
+            {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+          </button>
+        </div>
 
-        <div
-          onClick={handleLogout}
-          style={{
-            ...styles.item,
-            background: "#dc2626",
-            marginTop: "auto"
-          }}
-        >
-          <LogOut size={16} /> Logout
+        {/* Section label */}
+        {sidebarOpen && (
+          <p style={{
+            margin: 0, padding: "18px 18px 7px",
+            color: "#334155", fontSize: 10.5, fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: "0.18em",
+            whiteSpace: "nowrap",
+          }}>
+            Menu principal
+          </p>
+        )}
+
+        {/* Nav items */}
+        <nav style={{
+          flex: 1,
+          padding: sidebarOpen ? "4px 10px" : "14px 10px",
+          overflowY: "auto", overflowX: "hidden",
+          display: "flex", flexDirection: "column", gap: 3,
+          scrollbarWidth: "thin", scrollbarColor: "#1e293b transparent",
+        }}>
+          {menu.map((item) => {
+            const active = activeModule === item.id;
+            return (
+              <button
+                key={item.id}
+                title={!sidebarOpen ? item.label : undefined}
+                onClick={() => setActiveModule(item.id)}
+                style={{
+                  display: "flex", alignItems: "center",
+                  gap: 11,
+                  justifyContent: sidebarOpen ? "flex-start" : "center",
+                  padding: sidebarOpen ? "10px 12px" : "11px 0",
+                  borderRadius: 9,
+                  cursor: "pointer", width: "100%", textAlign: "left",
+                  background: active ? "rgba(59,130,246,0.14)" : "transparent",
+                  border: "none",
+                  borderLeft: active ? "3px solid #3b82f6" : "3px solid transparent",
+                  color: active ? "#bfdbfe" : "#64748b",
+                  fontSize: 14, fontWeight: active ? 600 : 400,
+                  letterSpacing: "-0.01em",
+                  whiteSpace: "nowrap", overflow: "hidden",
+                  transition: "background 0.14s, color 0.14s",
+                }}
+                onMouseEnter={e => {
+                  if (!active) {
+                    e.currentTarget.style.background = "rgba(255,255,255,0.05)";
+                    e.currentTarget.style.color = "#94a3b8";
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!active) {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#64748b";
+                  }
+                }}
+              >
+                <span style={{
+                  flexShrink: 0, display: "flex", alignItems: "center",
+                  color: active ? "#60a5fa" : "#475569",
+                  transition: "color 0.14s",
+                }}>
+                  {item.icon}
+                </span>
+                {sidebarOpen && (
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.label}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Logout */}
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "10px 10px 14px", flexShrink: 0 }}>
+          <button
+            title={!sidebarOpen ? "Déconnexion" : undefined}
+            onClick={handleLogout}
+            style={{
+              display: "flex", alignItems: "center",
+              gap: 11,
+              justifyContent: sidebarOpen ? "flex-start" : "center",
+              padding: sidebarOpen ? "10px 12px" : "11px 0",
+              borderRadius: 9, border: "none",
+              cursor: "pointer", width: "100%",
+              background: "transparent",
+              color: "#f87171",
+              fontSize: 14, fontWeight: 500,
+              whiteSpace: "nowrap",
+              transition: "background 0.15s, color 0.15s",
+            }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.12)"; e.currentTarget.style.color = "#fca5a5"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "transparent";           e.currentTarget.style.color = "#f87171"; }}
+          >
+            <LogOut size={18} style={{ flexShrink: 0 }} />
+            {sidebarOpen && <span>Déconnexion</span>}
+          </button>
         </div>
       </aside>
 
-      <div style={styles.main}>
-        <header style={styles.header}>
-          📅 {new Date().toLocaleDateString()} | 👤 {user.username} ({role})
+      {/* ══════════════════════════════════════
+          MAIN AREA
+      ══════════════════════════════════════ */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+
+        {/* TOP NAVBAR */}
+        <header style={{
+          height: NAVBAR_H, flexShrink: 0,
+          background: "white",
+          borderBottom: "1px solid #e8edf3",
+          display: "flex", alignItems: "center",
+          padding: "0 24px",
+          gap: 14,
+          boxShadow: "0 1px 4px rgba(15,23,42,0.07)",
+          zIndex: 10,
+          marginBottom: 12,
+        }}>
+
+          {/* LEFT — search */}
+          <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "0 1 auto" }}>
+            {/* Search Bar */}
+            <div style={{ position: "relative", width: 280, flexShrink: 0 }}>
+              <Search size={15} style={{
+                position: "absolute", left: 12, top: "50%",
+                transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none",
+              }} />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Rechercher…"
+                style={{
+                  width: "100%", boxSizing: "border-box",
+                  padding: "0 36px 0 38px",
+                  height: 38, borderRadius: 10,
+                  background: "#f1f5f9",
+                  border: "1.5px solid transparent",
+                  fontSize: 13.5, color: "#0f172a",
+                  outline: "none",
+                  transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
+                  fontFamily: "inherit",
+                }}
+                onFocus={e => {
+                  e.target.style.background   = "white";
+                  e.target.style.borderColor  = "#93c5fd";
+                  e.target.style.boxShadow    = "0 0 0 3px rgba(147,197,253,0.25)";
+                }}
+                onBlur={e => {
+                  e.target.style.background   = "#f1f5f9";
+                  e.target.style.borderColor  = "transparent";
+                  e.target.style.boxShadow    = "none";
+                }}
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  style={{
+                    position: "absolute", right: 10, top: "50%",
+                    transform: "translateY(-50%)",
+                    background: "none", border: "none",
+                    cursor: "pointer", color: "#94a3b8",
+                    display: "flex", alignItems: "center", padding: 2,
+                  }}
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* SPACER */}
+          <div style={{ flex: 1 }} />
+
+          {/* RIGHT */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+
+            {/* Clock */}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 10px" }}>
+              <Clock3 size={14} color="#94a3b8" />
+              <span style={{
+                color: "#475569", fontSize: 13, fontWeight: 500,
+                fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", letterSpacing: "-0.01em",
+              }}>
+                {currentTime.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" })}
+                <span style={{ color: "#cbd5e1", margin: "0 5px" }}>·</span>
+                {currentTime.toLocaleTimeString("fr-FR")}
+              </span>
+            </div>
+
+            {/* Notification bell */}
+            <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
+              <button
+                onClick={() => setNotifOpen(o => !o)}
+                title="Notifications"
+                style={{
+                  position: "relative",
+                  width: 38, height: 38, borderRadius: 9,
+                  background: notifOpen ? "#f1f5f9" : "transparent",
+                  border: notifOpen ? "1.5px solid #e2e8f0" : "1.5px solid transparent",
+                  cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  color: notifOpen ? "#3b82f6" : "#64748b",
+                  transition: "background 0.15s, color 0.15s, border-color 0.15s",
+                }}
+                onMouseEnter={e => {
+                  if (!notifOpen) {
+                    e.currentTarget.style.background = "#f8fafc";
+                    e.currentTarget.style.color = "#334155";
+                  }
+                }}
+                onMouseLeave={e => {
+                  if (!notifOpen) {
+                    e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.color = "#64748b";
+                  }
+                }}
+              >
+                <Bell size={18} />
+                {notifs.length > 0 && (
+                  <span style={{
+                    position: "absolute", top: 5, right: 5,
+                    width: 17, height: 17, borderRadius: "50%",
+                    background: "#ef4444", border: "2px solid white",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 800, color: "white", lineHeight: 1,
+                  }}>
+                    {notifs.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Dropdown */}
+              {notifOpen && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 10px)", right: 0,
+                  width: 330,
+                  background: "white",
+                  borderRadius: 14,
+                  border: "1px solid #e2e8f0",
+                  boxShadow: "0 16px 48px rgba(15,23,42,0.14), 0 2px 8px rgba(15,23,42,0.06)",
+                  zIndex: 100, overflow: "hidden",
+                }}>
+                  <div style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "15px 18px 13px",
+                    borderBottom: "1px solid #f1f5f9",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontWeight: 800, fontSize: 14, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                        Notifications
+                      </span>
+                      {notifs.length > 0 && (
+                        <span style={{
+                          background: "#ef4444", color: "white",
+                          fontSize: 10.5, fontWeight: 700,
+                          padding: "1px 7px", borderRadius: 99,
+                        }}>
+                          {notifs.length}
+                        </span>
+                      )}
+                    </div>
+                    {notifs.length > 0 && (
+                      <button
+                        onClick={clearAllNotifs}
+                        style={{
+                          background: "none", border: "none", cursor: "pointer",
+                          color: "#3b82f6", fontSize: 12.5, fontWeight: 600,
+                          padding: 0, fontFamily: "inherit",
+                        }}
+                      >
+                        Tout effacer
+                      </button>
+                    )}
+                  </div>
+
+                  {notifs.length === 0 ? (
+                    <div style={{ padding: "32px 18px", textAlign: "center", color: "#94a3b8", fontSize: 13.5 }}>
+                      <Bell size={30} style={{ display: "block", margin: "0 auto 10px", color: "#e2e8f0" }} />
+                      Aucune notification
+                    </div>
+                  ) : (
+                    notifs.map((n, i) => (
+                      <div
+                        key={n.id}
+                        style={{
+                          display: "flex", alignItems: "flex-start", gap: 12,
+                          padding: "13px 18px",
+                          borderBottom: i < notifs.length - 1 ? "1px solid #f8fafc" : "none",
+                          transition: "background 0.12s", cursor: "default",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#f8fafc"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        <span style={{
+                          width: 8, height: 8, borderRadius: "50%",
+                          background: n.dot, flexShrink: 0, marginTop: 6,
+                          boxShadow: `0 0 0 2px ${n.dot}33`,
+                        }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{ margin: 0, fontSize: 13.5, fontWeight: 600, color: "#0f172a", letterSpacing: "-0.01em", lineHeight: 1.35 }}>
+                            {n.title}
+                          </p>
+                          <p style={{ margin: "3px 0 0", fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
+                            {n.time}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  )}
+
+                  {notifs.length > 0 && (
+                    <div style={{ padding: "11px 18px 14px", borderTop: "1px solid #f1f5f9" }}>
+                      <button
+                        style={{
+                          width: "100%", padding: "9px", borderRadius: 8,
+                          background: "#f8fafc", border: "1px solid #e2e8f0",
+                          cursor: "pointer", fontFamily: "inherit",
+                          fontSize: 13, fontWeight: 600, color: "#475569",
+                          transition: "background 0.12s",
+                        }}
+                        onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
+                        onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}
+                      >
+                        Voir toutes les notifications
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <VDivider />
+
+            {/* User */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 0 0 6px" }}>
+              <div style={{
+                width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
+                background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 13, fontWeight: 800, color: "white",
+                boxShadow: "0 0 0 2.5px rgba(99,102,241,0.2)",
+                letterSpacing: "-0.02em",
+              }}>
+                {initials}
+              </div>
+              <div style={{ lineHeight: 1.2 }}>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
+                  {user.username}
+                </p>
+                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
+                  {roleLabel}
+                </p>
+              </div>
+            </div>
+          </div>
         </header>
 
-        <div style={styles.content}>{renderContent()}</div>
+        {/* PAGE CONTENT */}
+        <div style={{ flex: 1, overflowY: "auto", background: "#f1f5f9" }}>
+          {renderContent()}
+        </div>
       </div>
     </div>
   );
-};
-
-const styles = {
-  container: { display: "flex", height: "100vh", fontFamily: "sans-serif" },
-  sidebar: {
-    width: "260px",
-    background: "#0f172a",
-    color: "white",
-    padding: "15px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "8px"
-  },
-  sectionTitle: {
-    marginTop: 15,
-    marginBottom: 5,
-    fontSize: "12px",
-    color: "#94a3b8"
-  },
-  item: {
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px",
-    borderRadius: "6px",
-    cursor: "pointer"
-  },
-  main: {
-    flex: 1,
-    background: "#f8fafc",
-    display: "flex",
-    flexDirection: "column"
-  },
-  header: {
-    background: "white",
-    padding: "10px 20px",
-    borderBottom: "1px solid #e2e8f0"
-  },
-  content: {
-    padding: "20px",
-    overflowY: "auto",
-    height: "calc(100vh - 60px)"
-  }
-};
-
-export default MESDashboard;
+}
