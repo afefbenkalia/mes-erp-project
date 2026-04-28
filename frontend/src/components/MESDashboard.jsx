@@ -9,7 +9,7 @@ import {
 
 import Production from "./dashboard/Production";
 import OrdresFabrication from "./dashboard/OrdresFabrication";
-import Traceability from "./dashboard/Traceability";
+import Traceability from "./dashboard/Traceabilite";
 import UserManagement from "./UserManagement";
 import Machine from "./dashboard/Machine";
 import ProductionDashboard from "./dashboard/DashboardMes/ProductionDashboard";
@@ -64,8 +64,8 @@ const MESDashboard = () => {
       icon: <ClipboardList size={16} />
     },
     {
-      id: "traceability",
-      label: "Traceability",
+      id: "Traceabilite",
+      label: "Traceabilite",
       icon: <Search size={16} />
     },
     {
@@ -87,7 +87,7 @@ const MESDashboard = () => {
         return <Production />;
       case "ordres":
         return <OrdresFabrication />;
-      case "traceability":
+      case "Traceabilite":
         return <Traceability />;
       case "users":
         return <UserManagement />;

@@ -1,5 +1,6 @@
 """
 service.py – Production MES · Pipeline automatique
+Intègre les hooks du module Traçabilité.
 """
 
 import httpx
@@ -13,8 +14,12 @@ from app.modules.production.model import (
 )
 from app.modules.orders.model import OF
 
+# ── IMPORT TRAÇABILITÉ ────────────────────────────────────────────────────────
+from app.modules.traceabilite import service as trace_service
+
 ERP_BASE_URL       = "http://127.0.0.1:8001"
 ERP_STOCK_ENDPOINT = f"{ERP_BASE_URL}/api/stock/mes/production"
+
 MAPPING_PRODUIT_FINI = {
     "Ruban coton"      : "PF-RUBAN-COTON",
     "Ruban Laine"      : "PF-RUBAN-LAINE",
@@ -35,13 +40,15 @@ MAPPING_MP = {
 NB_ETAPES = len(SEQUENCE_MACHINES)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _code_pf(produit: str) -> str:
     return MAPPING_PRODUIT_FINI.get(produit, f"PF-{produit.upper().replace(' ', '-')}")
 
+
 def _code_mp(produit: str) -> str:
     return MAPPING_MP.get(produit, "MP-GENERIQUE")
+
 
 def _get_etape_courante(db: Session, production_id: int) -> EtapeProduction | None:
     """Retourne la première étape non terminée (= étape active du pipeline)."""
@@ -77,7 +84,8 @@ async def _notifier_erp(prod: Production):
     except Exception as e:
         print(f"⚠️  Erreur ERP : {e}")
 
-# ── PRODUCTION ───────────────────────────────────────────────────────────────
+
+# ── PRODUCTION ────────────────────────────────────────────────────────────────
 
 def create_production(db: Session, data: schema.ProductionCreate) -> Production:
     """
@@ -85,6 +93,7 @@ def create_production(db: Session, data: schema.ProductionCreate) -> Production:
       1. Crée la Production (statut EN_COURS) avec l'objectif PF
       2. Génère les 11 étapes EN_ATTENTE
       3. Active immédiatement la première étape (EN_COURS)
+      4. [TRAÇABILITÉ] Crée le lot de traçabilité associé
     """
     of = db.query(OF).filter(OF.id == data.of_id).first()
     if not of:
@@ -100,12 +109,11 @@ def create_production(db: Session, data: schema.ProductionCreate) -> Production:
             detail=f"Production déjà EN_COURS pour l'OF {of.numero} (id={existing.id})",
         )
 
-    # FIX: utilise quantite_produit_fini (unifié)
     prod = Production(
         of_id                 = of.id,
         of_numero             = of.numero,
         produit_fini          = data.produit_fini,
-        quantite_produit_fini = data.quantite_produit_fini,   # objectif PF
+        quantite_produit_fini = data.quantite_produit_fini,
         statut                = StatutProduction.EN_COURS,
     )
     db.add(prod)
@@ -125,8 +133,21 @@ def create_production(db: Session, data: schema.ProductionCreate) -> Production:
     db.commit()
     db.refresh(prod)
 
-    _add_historique(db, evenement="production_lancee",
-                    of_id=prod.of_id, production_id=prod.id)
+    _add_historique(
+        db,
+        evenement    = "production_lancee",
+        of_id        = prod.of_id,
+        production_id= prod.id,
+    )
+
+    # ── HOOK TRAÇABILITÉ : création du lot ───────────────────────────────────
+    try:
+        trace_service.creer_lot(db, prod)
+    except Exception as e:
+        # La traçabilité ne doit jamais bloquer la production
+        print(f"⚠️  Traçabilité – erreur création lot : {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     return prod
 
 
@@ -166,17 +187,19 @@ def get_etape_courante(db: Session, production_id: int) -> EtapeProduction:
 # ── PIPELINE : avancer ────────────────────────────────────────────────────────
 
 async def avancer_pipeline(
-    db: Session,
+    db           : Session,
     production_id: int,
-    data: schema.EtapeCreate,
+    data         : schema.EtapeCreate,
 ) -> schema.PipelineStateResponse:
     """
     Cœur du pipeline automatique :
       1. Récupère l'étape EN_COURS
       2. La valide avec les données de l'opérateur
-      3. Active automatiquement l'étape suivante
-      4. Si dernière étape → Production TERMINÉE + notification ERP
-      5. Retourne le nouvel état du pipeline
+      3. [TRAÇABILITÉ] Enregistre le snapshot de l'étape
+      4. Active automatiquement l'étape suivante
+      5. Si dernière étape → Production TERMINÉE + notification ERP
+      6. [TRAÇABILITÉ] Clôture le lot et calcule les KPIs finaux
+      7. Retourne le nouvel état du pipeline
     """
     prod = get_production(db, production_id)
     if prod.statut == StatutProduction.TERMINE:
@@ -186,7 +209,7 @@ async def avancer_pipeline(
     if not etape:
         raise HTTPException(status_code=400, detail="Aucune étape active dans le pipeline")
 
-    # Valider l'étape courante
+    # ── Valider l'étape courante ──────────────────────────────────────────────
     etape.qte_entree = data.qte_entree
     etape.qte_sortie = data.qte_sortie
     etape.operateur  = data.operateur
@@ -198,17 +221,32 @@ async def avancer_pipeline(
     if etape.ordre == 1:
         prod.quantite_matiere_premiere = data.qte_entree
     if etape.ordre == NB_ETAPES:
-        # La sortie réelle de la dernière étape écrase l'objectif PF
         prod.quantite_produit_fini = data.qte_sortie
 
     db.flush()
 
-    # Activer l'étape suivante
+    # ── HOOK TRAÇABILITÉ : snapshot de l'étape validée ───────────────────────
+    try:
+        # Récupérer les rebuts enregistrés pour cette machine sur cette production
+        rebuts_etape = (
+            db.query(model.Rebut)
+            .filter(
+                model.Rebut.production_id == production_id,
+                model.Rebut.machine       == etape.machine,
+            )
+            .all()
+        )
+        trace_service.enregistrer_etape(db, production_id, etape, rebuts_etape)
+    except Exception as e:
+        print(f"⚠️  Traçabilité – erreur snapshot étape {etape.ordre} : {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ── Activer l'étape suivante ──────────────────────────────────────────────
     prochaine_etape = (
         db.query(EtapeProduction)
         .filter(
             EtapeProduction.production_id == production_id,
-            EtapeProduction.ordre == etape.ordre + 1,
+            EtapeProduction.ordre         == etape.ordre + 1,
         )
         .first()
     )
@@ -223,20 +261,29 @@ async def avancer_pipeline(
     db.commit()
     db.refresh(prod)
 
+    # ── Fin de production ─────────────────────────────────────────────────────
     if pipeline_termine:
         await _notifier_erp(prod)
 
+        # ── HOOK TRAÇABILITÉ : clôture du lot ────────────────────────────────
+        try:
+            trace_service.cloturer_lot(db, prod)
+        except Exception as e:
+            print(f"⚠️  Traçabilité – erreur clôture lot : {e}")
+        # ─────────────────────────────────────────────────────────────────────
+
     _add_historique(
         db,
-        evenement="etape_validee",
-        of_id=prod.of_id,
-        production_id=prod.id,
-        etape_id=etape.id,
-        machine=etape.machine,
-        quantite_produit_fini=etape.qte_sortie,
-        quantite_matiere_premiere=etape.qte_entree,
+        evenement                = "etape_validee",
+        of_id                    = prod.of_id,
+        production_id            = prod.id,
+        etape_id                 = etape.id,
+        machine                  = etape.machine,
+        quantite_produit_fini    = etape.qte_sortie,
+        quantite_matiere_premiere= etape.qte_entree,
     )
 
+    # ── Construire la réponse ─────────────────────────────────────────────────
     etape_suivante_info = None
     if prochaine_etape:
         db.refresh(prochaine_etape)
@@ -246,7 +293,7 @@ async def avancer_pipeline(
         db.query(EtapeProduction)
         .filter(
             EtapeProduction.production_id == production_id,
-            EtapeProduction.statut == StatutEtape.TERMINE,
+            EtapeProduction.statut        == StatutEtape.TERMINE,
         )
         .count()
         / NB_ETAPES
@@ -263,15 +310,32 @@ async def avancer_pipeline(
     )
 
 
-# ── REBUTS ───────────────────────────────────────────────────────────────────
+# ── REBUTS ────────────────────────────────────────────────────────────────────
 
 def create_rebut(db: Session, data: schema.RebutCreate):
+    """
+    Enregistre un rebut et le lie au lot de traçabilité correspondant.
+    """
     rebut = model.Rebut(**data.dict())
     db.add(rebut)
     db.commit()
     db.refresh(rebut)
-    _add_historique(db, evenement="rebut", machine=rebut.machine,
-                    production_id=rebut.production_id)
+
+    _add_historique(
+        db,
+        evenement    = "rebut",
+        machine      = rebut.machine,
+        production_id= rebut.production_id,
+    )
+
+    # ── HOOK TRAÇABILITÉ : liaison rebut ↔ lot ───────────────────────────────
+    try:
+        trace_service.lier_rebut_lot(db, rebut)
+        db.commit()
+    except Exception as e:
+        print(f"⚠️  Traçabilité – erreur liaison rebut : {e}")
+    # ─────────────────────────────────────────────────────────────────────────
+
     return rebut
 
 

@@ -10,7 +10,7 @@ from app.core.ensure_schema import (
 from app.modules.production.router import router as production_router
 from app.modules.dashboard.router import router as dashboard_router
 from app.modules.orders.router import router as orders_router
-from app.modules.traceability.router import router as traceability_router
+from app.modules.traceabilite.router import router as traceabilite_router
 from app.modules.machines.router import router as machine_router
 from app.modules.auth.router import router as auth_router
 
@@ -48,7 +48,7 @@ app.include_router(auth_router, prefix="/auth")
 app.include_router(orders_router, prefix="/api")
 app.include_router(production_router, prefix="/api")
 app.include_router(dashboard_router, prefix="/api")
-app.include_router(traceability_router, prefix="/api")
+app.include_router(traceabilite_router, prefix="/api")
 app.include_router(machine_router, prefix="/api")
 @app.get("/")
 def root():
