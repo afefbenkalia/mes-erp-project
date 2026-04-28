@@ -18,8 +18,6 @@ from .schema import (
     ChangeStateRequest,
     MachineCreate,
     MachineCurrentState,
-    MachineDataCreate,
-    MachineDataResponse,
     MachineInDB,
     MachineResponse,
     MachineUpdate,
@@ -32,7 +30,6 @@ from .service import (
     change_state,
     close_current_state,
     create_machine,
-    create_machine_data,
     delete_machine,
     get_current_state,
     get_machine_by_id,
@@ -303,7 +300,3 @@ def close_machine_current_state(machine_id: int, db: Session = Depends(get_db)):
     return updated
 
 
-@router.post("/data", response_model=MachineDataResponse)
-def add_machine_data(data: MachineDataCreate, db: Session = Depends(get_db)):
-    """Recevoir data depuis simulation ou IoT"""
-    return create_machine_data(db, data)

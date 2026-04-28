@@ -8,7 +8,7 @@ from sqlalchemy import desc
 from app.core.datetime_utc import utc_now_naive
 from app.modules.maintenance.model import MachineOperationalState, MachineOperationalStatus
 
-from .model import Machine, MachineStateHistory
+from .model import Machine, MachineStateEnum, MachineStateHistory
 from .schema import MachineCreate, MachineUpdate, StateHistoryCreate, StateHistoryUpdate
 
 _LEGACY_STATE_MAP = {
@@ -62,13 +62,28 @@ def create_machine(db: Session, data: MachineCreate) -> Machine:
     db.commit()
     db.refresh(machine)
 
+    now = utc_now_naive()
+
     # Keep maintenance and machine modules aligned from creation time.
     status = MachineOperationalStatus(
         machine_id=machine.id,
         state=MachineOperationalState.MARCHE,
-        last_update=utc_now_naive(),
+        last_update=now,
     )
     db.add(status)
+
+    # Seed the initial open MARCHE history entry so runtime_cache can track time
+    # from the very first moment. Without this row, change_state() has no open
+    # entry to close, the initial MARCHE span is never recorded, and runtime
+    # stays 0 until a complete PAUSE→MARCHE cycle has been recorded.
+    initial_history = MachineStateHistory(
+        machine_id=machine.id,
+        state=MachineStateEnum.MARCHE,
+        started_at=now,
+        ended_at=None,
+        changed_by="system",
+    )
+    db.add(initial_history)
     db.commit()
     return machine
 
@@ -267,25 +282,3 @@ def change_state(
         StateHistoryCreate(state=new_state, started_at=now, ended_at=None, comment=comment),
         changed_by=changed_by,
     )
-from .model import MachineData
-
-def create_machine_data(db: Session, data: MachineDataCreate):
-    machine = get_machine_by_reference(db, data.machine_reference)
-
-    if not machine:
-        raise Exception("Machine non trouvée")
-
-    entry = MachineData(
-        machine_id=machine.id,
-        state=data.state,
-        temperature=data.temperature,
-        speed=data.speed,
-        vibration=data.vibration,
-        production=data.production,
-    )
-
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-
-    return entry

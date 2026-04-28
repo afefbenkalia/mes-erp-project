@@ -7,7 +7,6 @@ class OF(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     numero = Column(String, unique=True, nullable=False)
-    machine = Column(String, nullable=False)
     produit = Column(String, nullable=False)
     quantite = Column(Integer, nullable=False)
     date_debut = Column(Date, nullable=True)

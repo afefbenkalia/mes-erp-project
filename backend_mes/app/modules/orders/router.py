@@ -58,7 +58,7 @@ def create_of(of_data: OFCreate, db: Session = Depends(get_db)):  # Utilisez get
     
     new_of = OF(
         numero=of_data.numero,
-        machine=of_data.machine,
+       
         produit=of_data.produit,
         quantite=of_data.quantite,
         date_debut=of_data.date_debut,

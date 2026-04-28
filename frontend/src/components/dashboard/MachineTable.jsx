@@ -2,38 +2,65 @@ import React from "react";
 import { PencilIcon, TrashIcon } from "@heroicons/react/24/outline";
 
 const STATE_STYLE = {
-  MARCHE: "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80",
-  PAUSE: "bg-red-50 text-red-800 ring-1 ring-red-200/80",
+  MARCHE:      "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-200/80",
+  PAUSE:       "bg-red-50    text-red-800    ring-1 ring-red-200/80",
   MAINTENANCE: "bg-orange-50 text-orange-800 ring-1 ring-orange-200/80",
-  ERREUR: "bg-rose-100 text-rose-900 ring-1 ring-rose-300/80",
+  ERREUR:      "bg-rose-100  text-rose-900   ring-1 ring-rose-300/80",
 };
 
 const STATE_LABEL = {
-  MARCHE: "MARCHE",
-  PAUSE: "PAUSE",
+  MARCHE:      "MARCHE",
+  PAUSE:       "PAUSE",
   MAINTENANCE: "MAINTENANCE",
-  ERREUR: "ERREUR",
+  ERREUR:      "ERREUR",
 };
 
 const formatDurationMinutes = (minutesTotal) => {
   const m = Number(minutesTotal);
   if (!Number.isFinite(m) || m < 0) return "No Data";
   const totalMinutes = Math.round(m);
-  const hours = Math.floor(totalMinutes / 60);
+  const hours   = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   if (hours > 0) return `${hours}h ${minutes}min`;
   return `${minutes} min`;
 };
 
-const formatRealtimeNumber = (value, suffix = "") => {
+const formatNumber = (value, suffix = "") => {
   if (value === null || value === undefined || value === "") return "No Data";
-  return `${value}${suffix}`;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "No Data";
+  return `${n}${suffix}`;
 };
 
 const formatLastUpdate = (timestamp) => {
   if (!timestamp) return "No Data";
   return new Date(timestamp).toLocaleTimeString();
 };
+
+const computeRuntimeFromHistory = (stateHistory) => {
+  if (!Array.isArray(stateHistory) || !stateHistory.length) return null;
+  const now   = Date.now();
+  const since = now - 24 * 60 * 60 * 1000;
+  let runtime  = 0;
+  let downtime = 0;
+  for (const entry of stateHistory) {
+    const start = new Date(entry.started_at).getTime();
+    if (isNaN(start)) continue;
+    const end    = entry.ended_at ? new Date(entry.ended_at).getTime() : now;
+    const wStart = Math.max(start, since);
+    if (wStart >= end) continue;
+    const mins = (end - wStart) / 60000;
+    const s    = String(entry.state ?? "").trim().toUpperCase();
+    if (s === "MARCHE") runtime += mins;
+    else if (s === "PAUSE" || s === "ERREUR" || s === "MAINTENANCE") downtime += mins;
+  }
+  return {
+    runtime_minutes:  Math.round(runtime  * 10) / 10,
+    downtime_minutes: Math.round(downtime * 10) / 10,
+  };
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 const MachineTable = ({
   machines,
@@ -42,16 +69,47 @@ const MachineTable = ({
   onDelete,
   getRealtimeForMachine,
   mqttConnectionStatus,
+  machineKpis = {},
 }) => {
+
+  /**
+   * CORRECTION : lookup par machine.name
+   *
+   * Dans la table `machines` :
+   *   - name      = code machine  (ex: "CT-CARD-01")  ← correspond à etapes_production.machine
+   *   - reference = nom commercial (ex: "Cardex 2000") ← NE PAS utiliser comme clé KPI
+   *
+   * Le backend retourne { "CT-CARD-01": { production_per_day, rejects_per_day } }
+   * donc on cherche avec machine.name.
+   */
+  const getKpiForMachine = (machine) => {
+    const code = machine?.name;          // ← machine.name = "CT-CARD-01"
+    if (!code) return null;
+
+    // 1. Match exact
+    if (machineKpis[code] !== undefined) return machineKpis[code];
+
+    // 2. Match insensible à la casse (sécurité)
+    const codeUpper = code.toUpperCase();
+    const matchedKey = Object.keys(machineKpis).find(
+      (k) => k.toUpperCase() === codeUpper
+    );
+    if (matchedKey) return machineKpis[matchedKey];
+
+    return null;
+  };
+
   return (
     <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50 lg:col-span-2">
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-base font-semibold text-slate-900">Liste des machines</h2>
+        <h2 className="text-base font-semibold text-slate-900">
+          Liste des machines
+        </h2>
         <span
           className={`inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ${
             mqttConnectionStatus === "connected"
               ? "bg-emerald-50 text-emerald-700 ring-emerald-200/80"
-              : "bg-slate-100 text-slate-700 ring-slate-200/80"
+              : "bg-slate-100  text-slate-700  ring-slate-200/80"
           }`}
         >
           MQTT: {mqttConnectionStatus}
@@ -73,40 +131,66 @@ const MachineTable = ({
               <th className="px-4 py-3">temperature</th>
               <th className="px-4 py-3">pressure</th>
               <th className="px-4 py-3">speed</th>
-              <th className="px-4 py-3">current_of</th>
               <th className="px-4 py-3">last update</th>
               <th className="px-4 py-3 text-right">actions</th>
             </tr>
           </thead>
+
           <tbody className="divide-y divide-slate-100 bg-white">
             {loading ? (
               <tr>
-                <td colSpan={14} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                   Chargement…
                 </td>
               </tr>
             ) : machines.length === 0 ? (
               <tr>
-                <td colSpan={14} className="px-4 py-12 text-center text-slate-500">
+                <td colSpan={13} className="px-4 py-12 text-center text-slate-500">
                   Aucune machine
                 </td>
               </tr>
             ) : (
               machines.map((machine) => {
                 const rt = getRealtimeForMachine(machine);
-                const state = String(machine?.state || machine?.current_state || "").trim().toUpperCase();
+
+                const state = String(
+                  machine?.state || machine?.current_state || ""
+                ).trim().toUpperCase();
+
+                const histStats    = computeRuntimeFromHistory(machine.state_history);
+                const runtimeMins  = Number.isFinite(Number(rt?.runtime_minutes))
+                  ? rt.runtime_minutes
+                  : histStats?.runtime_minutes  ?? null;
+                const downtimeMins = Number.isFinite(Number(rt?.downtime_minutes))
+                  ? rt.downtime_minutes
+                  : histStats?.downtime_minutes ?? null;
+
+                // lookup par machine.name = code machine = clé du backend
+                const kpi = getKpiForMachine(machine);
+
                 return (
                   <tr key={machine.id} className="transition hover:bg-slate-50/80">
-                    <td className="px-4 py-3 font-medium text-slate-900">{machine.name}</td>
-                    <td className="px-4 py-3 text-slate-700">{machine.reference}</td>
+
+                    {/* name = code machine ex: CT-CARD-01 */}
+                    <td className="px-4 py-3 font-medium text-slate-900">
+                      {machine.name}
+                    </td>
+
+                    {/* reference = nom commercial ex: Cardex 2000 */}
+                    <td className="px-4 py-3 text-slate-700">
+                      {machine.reference}
+                    </td>
+
                     <td className="px-4 py-3 text-slate-700">
                       {machine.machine_type || "No Data"}
                     </td>
+
                     <td className="px-4 py-3">
                       {state ? (
                         <span
                           className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
-                            STATE_STYLE[state] || "bg-slate-100 text-slate-700 ring-1 ring-slate-200/80"
+                            STATE_STYLE[state] ||
+                            "bg-slate-100 text-slate-700 ring-1 ring-slate-200/80"
                           }`}
                         >
                           {STATE_LABEL[state] || state}
@@ -115,17 +199,41 @@ const MachineTable = ({
                         <span className="text-slate-500">No Data</span>
                       )}
                     </td>
-                    <td className="px-4 py-3">{rt ? formatDurationMinutes(rt.runtime_minutes) : "No Data"}</td>
-                    <td className="px-4 py-3">{rt ? formatDurationMinutes(rt.downtime_minutes) : "No Data"}</td>
-                    <td className="px-4 py-3">{rt ? formatRealtimeNumber(rt.production_per_day) : "No Data"}</td>
-                    <td className="px-4 py-3">{rt ? formatRealtimeNumber(rt.rejects_per_day) : "No Data"}</td>
+
                     <td className="px-4 py-3">
-                      {rt ? formatRealtimeNumber(rt.temperature, "°C") : "No Data"}
+                      {formatDurationMinutes(runtimeMins)}
                     </td>
-                    <td className="px-4 py-3">{rt ? formatRealtimeNumber(rt.pressure, " bar") : "No Data"}</td>
-                    <td className="px-4 py-3">{rt ? formatRealtimeNumber(rt.speed) : "No Data"}</td>
-                    <td className="px-4 py-3">{rt ? formatRealtimeNumber(rt.current_of) : "No Data"}</td>
-                    <td className="px-4 py-3 text-slate-600">{formatLastUpdate(rt?.lastUpdate)}</td>
+
+                    <td className="px-4 py-3">
+                      {formatDurationMinutes(downtimeMins)}
+                    </td>
+
+                    {/* production/day — source: etapes_production.qte_sortie */}
+                    <td className="px-4 py-3 tabular-nums">
+                      {kpi != null ? formatNumber(kpi.production_per_day) : "No Data"}
+                    </td>
+
+                    {/* rejects/day — source: rebuts.quantite */}
+                    <td className="px-4 py-3 tabular-nums">
+                      {kpi != null ? formatNumber(kpi.rejects_per_day) : "No Data"}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {rt ? formatNumber(rt.temperature, "°C") : "No Data"}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {rt ? formatNumber(rt.pressure, " bar") : "No Data"}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {rt ? formatNumber(rt.speed) : "No Data"}
+                    </td>
+
+                    <td className="px-4 py-3 text-slate-600">
+                      {formatLastUpdate(rt?.lastUpdate)}
+                    </td>
+
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
                         <button
@@ -158,4 +266,3 @@ const MachineTable = ({
 };
 
 export default MachineTable;
-

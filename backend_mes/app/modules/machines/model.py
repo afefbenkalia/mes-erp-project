@@ -1,44 +1,69 @@
-"""Modèles ORM pour la gestion des machines et de l'historique des états."""
+"""ORM models for machines and state history."""
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
-from sqlalchemy import Float
-from app.core.datetime_utc import utc_now_naive
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
-try:
-    from app.database import Base
-except ImportError:
-    from ...core.database import Base
+from app.core.datetime_utc import utc_now_naive
+from app.database import Base
 
 
 class MachineStateEnum:
-    """États possibles d'une machine."""
-    MARCHE = "MARCHE"
-    PAUSE = "PAUSE"
-    ERREUR = "ERREUR"
+    MARCHE      = "MARCHE"
+    PAUSE       = "PAUSE"
+    ERREUR      = "ERREUR"
     MAINTENANCE = "MAINTENANCE"
 
 
 class Machine(Base):
-    """Machine industrielle avec informations de base."""
-
     __tablename__ = "machines"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(100), nullable=False, index=True)
-    reference = Column(String(80), nullable=False, index=True)
-    machine_type = Column(String(80), nullable=False)
-    description = Column(String(500))
-    location = Column(String(120))
-    created_at = Column(DateTime, default=utc_now_naive)
-    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    id           = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    name         = Column(String(100), nullable=False, index=True)
+    reference    = Column(String(80),  nullable=False, index=True)
+    machine_type = Column(String(80),  nullable=False)
+    description  = Column(String(500), nullable=True)
+    location     = Column(String(120), nullable=True)
+    created_at   = Column(DateTime, default=utc_now_naive)
+    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
 
-    # Relation: historique des états
+    # ── audit log of all state transitions (many rows per machine) ──
     state_history = relationship(
         "MachineStateHistory",
         back_populates="machine",
         cascade="all, delete-orphan",
         order_by="desc(MachineStateHistory.started_at)",
+        lazy="select",
+    )
+
+    # ── live single-row current state (1:1) ──
+    operational_status = relationship(
+        "MachineOperationalStatus",
+        back_populates="machine",
+        uselist=False,
+        cascade="all, delete-orphan",
+        lazy="select",
+    )
+
+    # ── maintenance records ──
+    interventions = relationship(
+        "MaintenanceIntervention",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        order_by="desc(MaintenanceIntervention.start_time)",
+        lazy="select",
+    )
+    maintenance_history = relationship(
+        "MaintenanceHistory",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        order_by="desc(MaintenanceHistory.date)",
+        lazy="select",
+    )
+    preventive_plans = relationship(
+        "PreventiveMaintenance",
+        back_populates="machine",
+        cascade="all, delete-orphan",
+        lazy="select",
     )
 
     def __repr__(self):
@@ -46,43 +71,23 @@ class Machine(Base):
 
 
 class MachineStateHistory(Base):
-    """Historique des états d'une machine (MARCHE, PAUSE, ERREUR, MAINTENANCE)."""
+    """Full audit log of every state transition for a machine."""
 
     __tablename__ = "machine_state_history"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id         = Column(Integer, primary_key=True, index=True, autoincrement=True)
     machine_id = Column(Integer, ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    state = Column(String(20), nullable=False)  # MARCHE, PAUSE, ERREUR, MAINTENANCE
-    started_at = Column(DateTime, nullable=False)
-    ended_at = Column(DateTime, nullable=True)  # None = état en cours
-    comment = Column(String(500))
-    changed_by = Column(String(120), nullable=True)  # email/nom de l'acteur
-
+    state      = Column(String(20),  nullable=False)   # MARCHE | PAUSE | ERREUR | MAINTENANCE
+    started_at = Column(DateTime,    nullable=False)
+    ended_at   = Column(DateTime,    nullable=True)    # NULL = state currently active
+    comment    = Column(String(500), nullable=True)
+    changed_by = Column(String(120), nullable=True)    # email / username of actor
     created_at = Column(DateTime, default=utc_now_naive)
 
-    # Relation
     machine = relationship("Machine", back_populates="state_history")
 
     def __repr__(self):
-        return f"<MachineStateHistory(id={self.id}, machine_id={self.machine_id}, state='{self.state}', {self.started_at}->{self.ended_at})>"
-class MachineData(Base):
-    """Données temps réel des machines (simulation ou IoT)."""
-
-    __tablename__ = "machine_data"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    machine_id = Column(Integer, ForeignKey("machines.id", ondelete="CASCADE"), nullable=False, index=True)
-
-    timestamp = Column(DateTime, default=utc_now_naive, index=True)
-
-    state = Column(String(20))
-    temperature = Column(Float)
-    speed = Column(Integer)
-    vibration = Column(Float)
-    production = Column(Integer)
-
-    machine = relationship("Machine")
-
-    def __repr__(self):
-        return f"<MachineData(machine_id={self.machine_id}, temp={self.temperature}, speed={self.speed})>"
+        return (
+            f"<MachineStateHistory(id={self.id}, machine_id={self.machine_id}, "
+            f"state='{self.state}', {self.started_at}→{self.ended_at})>"
+        )

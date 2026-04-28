@@ -13,7 +13,7 @@ import ProductionChart from "./ProductionChart";
 import MachineChart from "./MachineChart";
 import OeeChart from "./OeeChart";
 import PerformanceTrendChart from "./PerformanceTrendChart";
-import { subscribeDashboardMqtt } from "../../../services/mqtt";
+import { subscribeDashboardMqtt } from "../../../services/telemetrySocket";
 
 /** Demo payload when API is unreachable or empty DB — keeps UI runnable. */
 const DEMO_PAYLOAD = {

@@ -5,7 +5,7 @@ from datetime import datetime
 
 # Admin creates users with these fields (NO password from admin)
 class UserCreateByAdmin(BaseModel):
-    cin: str = Field(..., min_length=1, max_length=50)
+    cin: str = Field(..., pattern="^\\d{8}$")
     nom: str = Field(..., min_length=1, max_length=100)
     prenom: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
@@ -13,7 +13,7 @@ class UserCreateByAdmin(BaseModel):
 
 
 class UserUpdateByAdmin(BaseModel):
-    cin: str = Field(..., min_length=1, max_length=50)
+    cin: str = Field(..., pattern="^\\d{8}$")
     nom: str = Field(..., min_length=1, max_length=100)
     prenom: str = Field(..., min_length=1, max_length=100)
     email: EmailStr

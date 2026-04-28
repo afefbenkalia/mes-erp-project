@@ -128,23 +128,3 @@ class ChangeStateRequest(BaseModel):
     state: str = Field(..., pattern="^(MARCHE|PAUSE|ERREUR|MAINTENANCE)$")
     comment: Optional[str] = Field(None, max_length=500)
     error_type: Optional[str] = Field(None, max_length=120)  # pour déclaration ERREUR
-class MachineDataCreate(BaseModel):
-    machine_reference: str
-    state: str
-    temperature: float
-    speed: int
-    vibration: float
-    production: int
-
-
-class MachineDataResponse(BaseModel):
-    id: int
-    machine_id: int
-    timestamp: datetime
-    state: str
-    temperature: float
-    speed: int
-    vibration: float
-    production: int
-
-    model_config = ConfigDict(from_attributes=True)

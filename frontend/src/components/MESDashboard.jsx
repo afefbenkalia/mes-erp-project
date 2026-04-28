@@ -8,6 +8,7 @@ import {
   ClipboardList,
   Clock3,
   Factory,
+  FileText,
   Gauge,
   GitMerge,
   HardDrive,
@@ -30,13 +31,14 @@ import Machine                from "./dashboard/Machine";
 import ProductionDashboard    from "./dashboard/DashboardMes/ProductionDashboard";
 import MaintenanceDashboard   from "./maintenance/MaintenanceDashboard";
 import Operateur              from "./operateur/Operateur";
+import ReportsDashboard       from "./reports/ReportsDashboard";
 
 /* ─────────────────────────────────────────
    ROLE / MODULE CONFIGURATION
 ───────────────────────────────────────── */
 const ROLE_CONFIG = {
   admin:       { defaultModule: "users",                 modules: ["users"] },
-  manager:     { defaultModule: "dashboard",             modules: ["dashboard","production","ordres","traceability","machine"] },
+  manager:     { defaultModule: "dashboard",             modules: ["dashboard","production","ordres","traceability","machine","rapports"] },
   maintenance: { defaultModule: "maintenance-dashboard", modules: ["maintenance-dashboard","maintenance-interventions","maintenance-historique","maintenance-preventive"] },
   operateur:   { defaultModule: "production",            modules: ["production","ordres","operateur"] },
 };
@@ -61,6 +63,7 @@ const MODULE_CONFIG = {
   "maintenance-preventive":    { label: "Préventive",    icon: <CalendarClock size={S} />,   component: MaintenanceDashboard },
   users:                       { label: "Utilisateurs",  icon: <Users size={S} />,           component: UserManagement },
   operateur:                   { label: "Machines",      icon: <SlidersHorizontal size={S} />, component: Operateur },
+  rapports:                    { label: "Rapports",      icon: <FileText size={S} />,          component: ReportsDashboard },
 };
 
 const ROLE_LABELS = {
@@ -160,6 +163,7 @@ export default function MESDashboard() {
       case "machine":      return <Machine />;
       case "users":        return <UserManagement />;
       case "operateur":    return <Operateur />;
+      case "rapports":     return <ReportsDashboard />;
       default:             return <div style={{ padding: 40, color: "#64748b", fontSize: 15 }}>Module introuvable.</div>;
     }
   };

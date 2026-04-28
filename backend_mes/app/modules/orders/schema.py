@@ -6,7 +6,6 @@ from datetime import date
 # Schéma de réception depuis l'ERP
 class OFCreate(BaseModel):
     numero: str
-    machine: str
     produit: str
     quantite: int
     date_debut: Optional[date] = None
@@ -17,7 +16,7 @@ class OFCreate(BaseModel):
 class OFOut(BaseModel):
     id: int
     numero: str
-    machine: str
+
     produit: str
     quantite: int
     date_debut: Optional[date]

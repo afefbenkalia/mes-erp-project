@@ -82,6 +82,7 @@ export const machineAPI = {
 
 export const dashboardAPI = {
   getProductionSummary: () => API.get("/api/dashboard/summary"),
+  getMachineKpis: () => API.get("/api/dashboard/machine-kpis"),
 };
 
 export const maintenanceAPI = {
@@ -100,6 +101,26 @@ export const maintenanceAPI = {
     API.patch(`/api/maintenance/preventive/${preventiveId}`, data),
   deletePreventive: (preventiveId) =>
     API.delete(`/api/maintenance/preventive/${preventiveId}`),
+};
+
+// ============ Endpoints Telemetry ============
+
+export const telemetryAPI = {
+  // REST snapshot of all live readings (enriched with runtime_minutes etc.)
+  getCurrent: () => API.get("/api/telemetry/current"),
+
+  // Aggregated history from PostgreSQL (resolution: 'minute' | 'hour' | 'day')
+  getHistory: (machineId, params = {}) =>
+    API.get(`/api/telemetry/${machineId}/history`, { params }),
+};
+
+export const reportsAPI = {
+  getDaily:        (date)       => API.get(`/api/reports/daily?date=${date}`),
+  getWeekly:       (week)       => API.get(`/api/reports/weekly?week=${week}`),
+  getProductionOf: (from, to)   => API.get(`/api/reports/production?date_from=${from}&date_to=${to}`),
+  getMaintenance:  (from, to)   => API.get(`/api/reports/maintenance?date_from=${from}&date_to=${to}`),
+  getPerformance:  (from, to)   => API.get(`/api/reports/performance?date_from=${from}&date_to=${to}`),
+  getTraceability: (from, to)   => API.get(`/api/reports/traceability?date_from=${from}&date_to=${to}`),
 };
 
 export default API;

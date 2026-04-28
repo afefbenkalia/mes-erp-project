@@ -44,6 +44,9 @@ const emptyForm = {
   role: "operator"
 };
 
+const normalizeCin = (value) => (value || "").replace(/\D/g, "").slice(0, 8);
+const isValidCin = (value) => /^\d{8}$/.test((value || "").trim());
+
 const normalize = (value) => value?.toLowerCase().trim();
 
 const formatDate = (dateValue) => {
@@ -140,7 +143,17 @@ const UserModal = ({
 
         <form onSubmit={(e) => { e.preventDefault(); onSave(); }} style={{ padding: 26, display: "grid", gap: 16 }}>
           <Field label="CIN *">
-            <input value={form.cin} onChange={(e) => setForm({ ...form, cin: e.target.value })} required placeholder="ABC12345" className="mes-input" />
+            <input
+              value={form.cin}
+              onChange={(e) => setForm({ ...form, cin: normalizeCin(e.target.value) })}
+              required
+              placeholder="12345678"
+              inputMode="numeric"
+              pattern="[0-9]{8}"
+              title="Le CIN doit contenir exactement 8 chiffres"
+              maxLength={8}
+              className="mes-input"
+            />
           </Field>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
             <Field label="Nom *">
@@ -330,10 +343,15 @@ const UserManagement = () => {
       return;
     }
 
+    if (!isValidCin(form.cin)) {
+      showToast("Le CIN doit contenir exactement 8 chiffres.", "error");
+      return;
+    }
+
     try {
       setSaving(true);
       await API.post("/auth/create-user", {
-        cin: form.cin.trim(),
+        cin: normalizeCin(form.cin),
         nom: form.nom.trim(),
         prenom: form.prenom.trim(),
         email: form.email.trim(),
@@ -409,10 +427,15 @@ const UserManagement = () => {
       return;
     }
 
+    if (!isValidCin(editForm.cin)) {
+      showToast("Le CIN doit contenir exactement 8 chiffres.", "error");
+      return;
+    }
+
     try {
       setSaving(true);
       await API.put(`/auth/users/${editingUserId}`, {
-        cin: editForm.cin.trim(),
+        cin: normalizeCin(editForm.cin),
         nom: editForm.nom.trim(),
         prenom: editForm.prenom.trim(),
         email: editForm.email.trim(),
@@ -442,10 +465,10 @@ const UserManagement = () => {
   }
 
   return (
-    <div className="um-page" style={{ display: "grid", gap: 24 }}>
+    <div className=" space-y-7 px-4 sm:px-6 lg:px-8 um-page" style={{ display: "grid", gap: 24 }}>
       <style>{`
         .um-page {
-          padding: 8px;
+          padding: 25px;
           background:
             radial-gradient(1200px 260px at 10% -20%, rgba(59,130,246,.12), transparent 60%),
             radial-gradient(900px 200px at 90% -10%, rgba(139,92,246,.12), transparent 55%),
