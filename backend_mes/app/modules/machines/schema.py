@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
-
+from typing import Optional
 from app.core.datetime_utc import to_utc_z_iso
 
 
@@ -41,12 +41,12 @@ class MachineInDB(MachineBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    created_at: datetime
-    updated_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     @field_serializer("created_at", "updated_at")
     def _ser_machine_timestamps(self, v: datetime) -> str:
-        return to_utc_z_iso(v) or ""
+        return to_utc_z_iso(v) if v else None
 
 
 class MachineResponse(MachineInDB):
@@ -104,7 +104,7 @@ class StateHistoryResponse(BaseModel):
 
     @field_serializer("started_at", "ended_at", "created_at")
     def _ser_history_timestamps(self, v: Optional[datetime]) -> Optional[str]:
-        return to_utc_z_iso(v)
+       return to_utc_z_iso(v) if v else None
 
 
 # ============ État actuel ============
@@ -119,7 +119,7 @@ class MachineCurrentState(BaseModel):
 
     @field_serializer("started_at")
     def _ser_started(self, v: datetime) -> str:
-        return to_utc_z_iso(v) or ""
+        return to_utc_z_iso(v) if v else None
 
 
 class ChangeStateRequest(BaseModel):

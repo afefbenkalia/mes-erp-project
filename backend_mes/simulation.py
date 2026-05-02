@@ -73,7 +73,8 @@ class MachineSim:
     temperature:  float = 25.0
     pressure:     float = 0.0
     speed:        int   = 0
-    vibration:    float = 0.01
+    vibration:    float = 0.01 
+    
 
     def fetch_state(self) -> str:
         """Read current machine state from the authoritative API endpoint."""

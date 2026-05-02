@@ -23,8 +23,8 @@ class Machine(Base):
     machine_type = Column(String(80),  nullable=False)
     description  = Column(String(500), nullable=True)
     location     = Column(String(120), nullable=True)
-    created_at   = Column(DateTime, default=utc_now_naive)
-    updated_at   = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive)
+    created_at = Column(DateTime, default=utc_now_naive, nullable=False)
+    updated_at = Column(DateTime, default=utc_now_naive, onupdate=utc_now_naive, nullable=False)
 
     # ── audit log of all state transitions (many rows per machine) ──
     state_history = relationship(

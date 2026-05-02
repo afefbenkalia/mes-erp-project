@@ -1,1088 +1,1003 @@
-//Traceability.jsx
-import { useState, useEffect } from 'react';
-import {
-  Search,
-  Package,
-  Clock,
-  Settings,
-  User,
-  CheckCircle2,
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  FileText,
-  Activity,
-  Layers,
-  Calendar,
-  Filter,
-  Thermometer,
-  Gauge,
-  Zap,
-  X,
-  Plus,
-  Save,
-  AlertCircle
-} from 'lucide-react';
+/**
+ * Traceability.jsx – Module Traçabilité MES
+ * 3 onglets : Suivi par lot | Historisation | Association Machines
+ * Association Machines : paramètres temps réel depuis le simulateur MQTT
+ */
 
-// Composant Modal de création de lot
-function CreateLotModal({ isOpen, onClose, onLotCreated }) {
-  const [formData, setFormData] = useState({
-    numero_lot: '',
-    produit: '',
-    ordre_id: '',
-    quantite_initiale: '',
-    date_creation: new Date().toISOString().split('T')[0],
-    status: 'in-progress'
-  });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import axios from "axios";
+import { subscribeMachineRealtime } from "../../services/telemetrySocket";
 
-  const generateLotNumber = () => {
-    const year = new Date().getFullYear();
-    const month = String(new Date().getMonth() + 1).padStart(2, '0');
-    const day = String(new Date().getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-    return `LOT-${year}${month}${day}-${random}`;
-  };
+// ── URLs API ──────────────────────────────────────────────────────────────────
+const BASE      = "http://127.0.0.1:8000/api";
+const TRACE_URL = `${BASE}/traceability`;
+const PROD_URL  = `${BASE}/productions/`;
 
-  const handleChange = (e) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value
-    });
-  };
+// ── Séquence machines atelier cardage ─────────────────────────────────────────
+const SEQUENCE_MACHINES = [
+  { ordre:1,  code:"CT-ALIM-01", nom:"Alimentation" },
+  { ordre:2,  code:"CT-COND-01", nom:"Condenseur 1" },
+  { ordre:3,  code:"CT-NET-01",  nom:"Nettoyeuse"   },
+  { ordre:4,  code:"CT-COND-02", nom:"Condenseur 2" },
+  { ordre:5,  code:"CT-CARD-01", nom:"Cardage 1"    },
+  { ordre:6,  code:"CT-CARD-02", nom:"Cardage 2"    },
+  { ordre:7,  code:"CT-CARD-03", nom:"Cardage 3"    },
+  { ordre:8,  code:"CT-COND-03", nom:"Condenseur 3" },
+  { ordre:9,  code:"CT-INJ-01",  nom:"Injection"    },
+  { ordre:10, code:"CT-SEC-01",  nom:"Séchage"      },
+  { ordre:11, code:"CT-BOB-01",  nom:"Bobinage"     },
+];
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
+// Le simulateur publie avec machine_reference = machine.reference (depuis DB)
+// On mappe code MES → reference DB pour faire le join avec les données MQTT
+// Exemples : "CT-ALIM-01" → cherché dans realtimeData par référence ou par code
+const STATUT_COLORS = {
+  TERMINE    : { bg:"#d1fae5", text:"#065f46", dot:"#10b981" },
+  EN_COURS   : { bg:"#fef3c7", text:"#92400e", dot:"#f59e0b" },
+  EN_ATTENTE : { bg:"#e2e8f0", text:"#475569", dot:"#94a3b8" },
+};
 
-    if (!formData.produit || !formData.quantite_initiale) {
-      setError('Veuillez remplir tous les champs obligatoires');
-      setLoading(false);
-      return;
-    }
+const ETAT_COLORS = {
+  MARCHE     : { color:"#10b981", bg:"#d1fae5" },
+  PAUSE      : { color:"#ef4444", bg:"#fee2e2" },
+  ERREUR     : { color:"#991b1b", bg:"#fee2e2" },
+  MAINTENANCE: { color:"#d97706", bg:"#fef3c7" },
+};
 
-    const lotData = {
-      ...formData,
-      numero_lot: formData.numero_lot || generateLotNumber(),
-      quantite_initiale: parseInt(formData.quantite_initiale),
-      quantite_finale: parseInt(formData.quantite_initiale),
-      status: 'in-progress'
-    };
+const EVENEMENT_LABELS = {
+  production_lancee : "🚀 Lancement",
+  etape_validee     : "✅ Étape validée",
+  rebut             : "⚠️ Rebut",
+};
 
-    try {
-      const response = await fetch("http://127.0.0.1:8000/api/traceability/lots", {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(lotData),
-      });
+// ── Helpers ───────────────────────────────────────────────────────────────────
+const fmt    = (v, suffix="") => v != null && !isNaN(v) ? `${parseFloat(v).toFixed(2)}${suffix}` : "—";
+const fmtPct = (v) => v != null && !isNaN(v) ? `${parseFloat(v).toFixed(1)}%` : "—";
+const fmtTs  = (ts) => ts ? new Date(ts).toLocaleTimeString("fr-FR") : "—";
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Erreur lors de la création du lot');
-      }
+// ── Composants UI ─────────────────────────────────────────────────────────────
 
-      const newLot = await response.json();
-      onLotCreated(newLot);
-      onClose();
-      setFormData({
-        numero_lot: '',
-        produit: '',
-        ordre_id: '',
-        quantite_initiale: '',
-        date_creation: new Date().toISOString().split('T')[0],
-        status: 'in-progress'
-      });
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  if (!isOpen) return null;
-
+const StatutBadge = ({ statut }) => {
+  const c = STATUT_COLORS[statut] || STATUT_COLORS.EN_ATTENTE;
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      background: 'rgba(0,0,0,0.6)',
-      backdropFilter: 'blur(4px)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 1000,
-      animation: 'fadeIn 0.2s ease-in'
-    }}>
-      <div style={{
-        background: 'white',
-        borderRadius: '12px',
-        width: '90%',
-        maxWidth: '550px',
-        maxHeight: '90vh',
-        overflow: 'auto',
-        boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
-        animation: 'slideUp 0.3s ease-out'
-      }}>
+    <span style={{ background:c.bg, color:c.text, padding:"2px 10px",
+      borderRadius:20, fontSize:12, fontWeight:600,
+      display:"inline-flex", alignItems:"center", gap:5 }}>
+      <span style={{ width:6, height:6, borderRadius:"50%", background:c.dot, flexShrink:0 }} />
+      {statut?.replace("_"," ")}
+    </span>
+  );
+};
+
+const EtatBadge = ({ etat }) => {
+  if (!etat) return <span style={{ color:"#cbd5e1", fontSize:12 }}>—</span>;
+  const c = ETAT_COLORS[etat] || { color:"#64748b", bg:"#f1f5f9" };
+  return (
+    <span style={{ background:c.bg, color:c.color, padding:"2px 10px",
+      borderRadius:20, fontSize:11, fontWeight:700,
+      display:"inline-flex", alignItems:"center", gap:4 }}>
+      <span style={{ width:6, height:6, borderRadius:"50%", background:c.color }} />
+      {etat}
+    </span>
+  );
+};
+
+const KpiCard = ({ label, value, sub, color="#2563eb", icon }) => (
+  <div style={{ background:"#fff", borderRadius:12, padding:"1.1rem 1.25rem",
+    boxShadow:"0 1px 4px rgba(0,0,0,0.07)", borderLeft:`4px solid ${color}`,
+    display:"flex", alignItems:"center", gap:"1rem" }}>
+    <span style={{ fontSize:22 }}>{icon}</span>
+    <div>
+      <div style={{ fontSize:11, color:"#64748b", fontWeight:600,
+        textTransform:"uppercase", letterSpacing:"0.06em" }}>{label}</div>
+      <div style={{ fontSize:22, fontWeight:700, color, lineHeight:1.2 }}>{value}</div>
+      {sub && <div style={{ fontSize:11, color:"#94a3b8", marginTop:2 }}>{sub}</div>}
+    </div>
+  </div>
+);
+
+// ── Jauge mini (pour température / pression / vitesse) ───────────────────────
+const MiniGauge = ({ label, value, unit, min, max, color }) => {
+  const pct = value != null ? Math.min(100, Math.max(0, ((value - min) / (max - min)) * 100)) : 0;
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+      <div style={{ display:"flex", justifyContent:"space-between", fontSize:11 }}>
+        <span style={{ color:"#64748b", fontWeight:600 }}>{label}</span>
+        <span style={{ color, fontWeight:700 }}>
+         {value != null
+         ? `${value % 1 !== 0 ? value.toFixed(1) : value} ${unit}`
+           : "—"}
+        </span>
+      </div>
+      <div style={{ background:"#e2e8f0", borderRadius:99, height:6, overflow:"hidden" }}>
         <div style={{
-          padding: '24px',
-          borderBottom: '1px solid #e9ecef',
-          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-          borderRadius: '12px 12px 0 0',
-          color: 'white'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{
-                background: 'rgba(255,255,255,0.2)',
-                padding: '8px',
-                borderRadius: '10px'
-              }}>
-                <Plus size={24} />
-              </div>
-              <div>
-                <h2 style={{ margin: 0, fontSize: '20px', fontWeight: '600' }}>Création de lot</h2>
-                <p style={{ margin: '4px 0 0 0', fontSize: '13px', opacity: 0.9 }}>Remplissez les informations ci-dessous</p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              style={{
-                background: 'rgba(255,255,255,0.2)',
-                border: 'none',
-                cursor: 'pointer',
-                padding: '8px',
-                borderRadius: '8px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.3)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.2)'}
-            >
-              <X size={20} color="white" />
-            </button>
-          </div>
-        </div>
-
-        <form onSubmit={handleSubmit} style={{ padding: '24px' }}>
-          {error && (
-            <div style={{
-              background: '#fee',
-              borderLeft: '4px solid #dc3545',
-              padding: '12px',
-              borderRadius: '8px',
-              marginBottom: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '10px',
-              fontSize: '14px',
-              color: '#dc3545'
-            }}>
-              <AlertCircle size={18} />
-              {error}
-            </div>
-          )}
-
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
-              NUMÉRO DE LOT
-            </label>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <input
-                type="text"
-                name="numero_lot"
-                value={formData.numero_lot}
-                onChange={handleChange}
-                placeholder="Auto-généré si vide"
-                style={{
-                  flex: 1,
-                  padding: '10px 12px',
-                  border: '2px solid #e9ecef',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  transition: 'all 0.2s',
-                  outline: 'none'
-                }}
-                onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-                onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-              />
-              <button
-                type="button"
-                onClick={() => setFormData({ ...formData, numero_lot: generateLotNumber() })}
-                style={{
-                  padding: '0 16px',
-                  background: '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.background = '#5a6268'}
-                onMouseLeave={(e) => e.currentTarget.style.background = '#6c757d'}
-              >
-                Générer
-              </button>
-            </div>
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
-              PRODUIT <span style={{ color: '#dc3545' }}>*</span>
-            </label>
-            <input
-              type="text"
-              name="produit"
-              value={formData.produit}
-              onChange={handleChange}
-              placeholder="Ex: Joint SPI 45x62x8 - Nitrile"
-              required
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                border: '2px solid #e9ecef',
-                borderRadius: '8px',
-                fontSize: '14px',
-                transition: 'all 0.2s',
-                outline: 'none'
-              }}
-              onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
-                ORDRE DE FABRICATION
-              </label>
-              <input
-                type="text"
-                name="ordre_id"
-                value={formData.ordre_id}
-                onChange={handleChange}
-                placeholder="Ex: OF-2026-001"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '2px solid #e9ecef',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  transition: 'all 0.2s',
-                  outline: 'none'
-                }}
-                onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-                onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-              />
-            </div>
-            <div>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
-                QUANTITÉ INITIALE <span style={{ color: '#dc3545' }}>*</span>
-              </label>
-              <input
-                type="number"
-                name="quantite_initiale"
-                value={formData.quantite_initiale}
-                onChange={handleChange}
-                placeholder="Ex: 1000"
-                required
-                min="1"
-                style={{
-                  width: '100%',
-                  padding: '10px 12px',
-                  border: '2px solid #e9ecef',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  transition: 'all 0.2s',
-                  outline: 'none'
-                }}
-                onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-                onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-              />
-            </div>
-          </div>
-
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '8px', color: '#495057' }}>
-              DATE DE CRÉATION
-            </label>
-            <input
-              type="date"
-              name="date_creation"
-              value={formData.date_creation}
-              onChange={handleChange}
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                border: '2px solid #e9ecef',
-                borderRadius: '8px',
-                fontSize: '14px',
-                transition: 'all 0.2s',
-                outline: 'none'
-              }}
-              onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-            />
-          </div>
-
-          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', paddingTop: '8px' }}>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                padding: '10px 20px',
-                background: 'white',
-                color: '#6c757d',
-                border: '2px solid #e9ecef',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = '#dc3545';
-                e.currentTarget.style.color = '#dc3545';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = '#e9ecef';
-                e.currentTarget.style.color = '#6c757d';
-              }}
-            >
-              Annuler
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                padding: '10px 24px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => {
-                if (!loading) e.currentTarget.style.transform = 'translateY(-1px)';
-              }}
-              onMouseLeave={(e) => {
-                if (!loading) e.currentTarget.style.transform = 'translateY(0)';
-              }}
-            >
-              {loading ? 'Création en cours...' : (
-                <>
-                  <Save size={18} />
-                  Créer le lot
-                </>
-              )}
-            </button>
-          </div>
-        </form>
+          width:`${pct}%`, height:6, borderRadius:99,
+          background: color, transition:"width 1s ease",
+        }} />
       </div>
     </div>
   );
-}
+};
 
-export default function Traceability() {
-  const [searchLot, setSearchLot] = useState('');
-  const [selectedLot, setSelectedLot] = useState(null);
-  const [filterStatus, setFilterStatus] = useState('all');
-  const [lots, setLots] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [expandedSteps, setExpandedSteps] = useState({});
-  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+// ─────────────────────────────────────────────────────────────────────────────
+//  ONGLET 1 – SUIVI PAR LOT
+// ─────────────────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    fetchLots();
-  }, []);
+const SuiviLot = ({ productions }) => {
+  const [selectedId, setSelectedId] = useState(null);
+  const [lot, setLot]               = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [search, setSearch]         = useState("");
+  const [filterStatut, setFilterStatut] = useState("TOUS");
 
-  const fetchLots = async () => {
+  const filtered = useMemo(() => {
+    let list = [...productions];
+    if (filterStatut !== "TOUS") list = list.filter(p => p.statut === filterStatut);
+    if (search) list = list.filter(p =>
+      p.of_numero?.toLowerCase().includes(search.toLowerCase()) ||
+      p.produit_fini?.toLowerCase().includes(search.toLowerCase())
+    );
+    return list;
+  }, [productions, filterStatut, search]);
+
+  const loadLot = useCallback(async (id) => {
     setLoading(true);
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/traceability/lots");
-      if (!response.ok) throw new Error('Erreur lors du chargement');
-      const data = await response.json();
-      setLots(data);
-    } catch (err) {
-      console.error("Erreur API:", err);
+      let data;
+      try {
+        const r = await axios.get(`${TRACE_URL}/lots/${id}`);
+        data = r.data;
+      } catch {
+        const r = await axios.get(`${PROD_URL}${id}`);
+        const p = r.data;
+        data = {
+          ...p,
+          date_production: p.date,
+          rendement_global: p.quantite_matiere_premiere && p.quantite_produit_fini
+            ? ((p.quantite_produit_fini / p.quantite_matiere_premiere) * 100).toFixed(1)
+            : null,
+          total_rebuts: 0,
+          etapes: (p.etapes || []).map(e => ({
+            ...e,
+            perte: e.qte_entree != null && e.qte_sortie != null
+              ? (e.qte_entree - e.qte_sortie).toFixed(3) : null,
+            rendement: e.qte_entree && e.qte_sortie
+              ? ((e.qte_sortie / e.qte_entree) * 100).toFixed(1) : null,
+          })),
+        };
+      }
+      setLot(data);
+      setSelectedId(id);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSearch = () => {
-    if (!searchLot.trim()) {
-      setSelectedLot(null);
-      return;
-    }
-    const found = lots.find(lot =>
-      lot.numero_lot?.toLowerCase().includes(searchLot.toLowerCase())
-    );
-    setSelectedLot(found || null);
-  };
-
-  const handleLotCreated = (newLot) => {
-    fetchLots();
-    setSelectedLot(newLot);
-    setSearchLot(newLot.numero_lot);
-  };
-
-  const filteredLots = lots.filter(lot =>
-    filterStatus === 'all' ? true : lot.status === filterStatus
-  );
-
-  const getStatusLabel = (status) => {
-    const labels = {
-      completed: 'Terminé',
-      'in-progress': 'En cours',
-      rejected: 'Rejeté',
-      defect: 'Défaut'
-    };
-    return labels[status] || status;
-  };
-
-  const getStatusColor = (status) => {
-    const colors = {
-      completed: '#d4edda',
-      'in-progress': '#fff3cd',
-      rejected: '#f8d7da',
-      defect: '#f8d7da'
-    };
-    return colors[status] || '#e9ecef';
-  };
-
-  const exportToPDF = (lot) => {
-   window.open(`http://127.0.0.1:8000/traceability/lots/${lot.numero_lot}/pdf`);
-  };
-
-  const toggleStepDetails = (stepId) => {
-    setExpandedSteps(prev => ({
-      ...prev,
-      [stepId]: !prev[stepId]
-    }));
-  };
-
-  const formatDuration = (minutes) => {
-    if (!minutes) return 'N/A';
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    return hours > 0 ? `${hours}h ${mins}min` : `${mins}min`;
-  };
+  }, []);
 
   return (
-    <div style={{
-      padding: '24px',
-      fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
-      maxWidth: '1400px',
-      margin: '0 auto',
-      background: '#f8f9fa',
-      minHeight: '100vh'
-    }}>
-      <style>
-        {`
-          @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-          }
-          @keyframes slideUp {
-            from {
-              opacity: 0;
-              transform: translateY(30px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}
-      </style>
-      
-      {/* Header */}
-      <div style={{
-        background: 'white',
-        borderRadius: '12px',
-        padding: '20px 24px',
-        marginBottom: '24px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        border: '1px solid #e9ecef'
-      }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-              padding: '10px',
-              borderRadius: '10px',
-              color: 'white'
-            }}>
-              <Layers size={24} />
-            </div>
-            <div>
-              <h1 style={{ margin: 0, fontSize: '20px', fontWeight: '600', color: '#212529' }}>TRAÇABILITÉ</h1>
-              <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#6c757d' }}>Système de traçabilité MES · Module 04</p>
-            </div>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
-              style={{
-                padding: '10px 20px',
-                background: 'linear-gradient(135deg, #28a745 0%, #20c997 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                fontSize: '14px',
-                fontWeight: '500',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-            >
-              <Plus size={18} />
-              Nouveau lot
-            </button>
-            <div style={{
-              padding: '6px 12px',
-              background: '#f8f9fa',
-              borderRadius: '6px',
-              fontSize: '12px',
-              color: '#6c757d',
-              fontFamily: 'monospace'
-            }}>
-              {new Date().toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Search section */}
-      <div style={{
-        background: 'white',
-        borderRadius: '12px',
-        padding: '24px',
-        marginBottom: '24px',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        border: '1px solid #e9ecef'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-          <Search size={20} color="#667eea" />
-          <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '600', color: '#212529' }}>RECHERCHE PAR NUMÉRO DE LOT</h3>
-        </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '15px' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '12px', fontWeight: '600', color: '#6c757d', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              NUMÉRO DE LOT
-            </label>
-            <input
-              type="text"
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                border: '2px solid #e9ecef',
-                borderRadius: '8px',
-                fontSize: '14px',
-                transition: 'all 0.2s',
-                outline: 'none'
-              }}
-              placeholder="Ex: LOT-20260402-123"
-              value={searchLot}
-              onChange={(e) => setSearchLot(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              onFocus={(e) => e.currentTarget.style.borderColor = '#667eea'}
-              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <button
-              onClick={handleSearch}
-              style={{
-                width: '100%',
-                padding: '10px',
-                background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                color: 'white',
-                border: 'none',
-                borderRadius: '8px',
-                cursor: 'pointer',
-                fontWeight: '500',
-                fontSize: '14px',
-                transition: 'all 0.2s'
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
-              onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-            >
-              Rechercher
-            </button>
-          </div>
-        </div>
-
-        <div style={{ marginTop: '20px' }}>
-          <p style={{ fontSize: '12px', fontWeight: '600', color: '#6c757d', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            ACCÈS RAPIDE
-          </p>
-          <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-            {lots.slice(0, 5).map(lot => (
-              <button
-                key={lot.id}
-                onClick={() => {
-                  setSearchLot(lot.numero_lot);
-                  setSelectedLot(lot);
-                }}
-                style={{
-                  padding: '6px 14px',
-                  background: '#f8f9fa',
-                  border: '1px solid #e9ecef',
-                  borderRadius: '6px',
-                  fontSize: '13px',
-                  cursor: 'pointer',
-                  fontFamily: 'monospace',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = '#667eea';
-                  e.currentTarget.style.color = 'white';
-                  e.currentTarget.style.borderColor = '#667eea';
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = '#f8f9fa';
-                  e.currentTarget.style.color = '#212529';
-                  e.currentTarget.style.borderColor = '#e9ecef';
-                }}
-              >
-                {lot.numero_lot}
+    <div style={{ display:"grid", gridTemplateColumns:"360px 1fr", gap:"1.5rem", alignItems:"start" }}>
+      {/* Liste */}
+      <div style={{ background:"#fff", borderRadius:14, boxShadow:"0 1px 4px rgba(0,0,0,0.07)", overflow:"hidden" }}>
+        <div style={{ padding:"1rem", borderBottom:"1px solid #f1f5f9" }}>
+          <input placeholder="🔍  Rechercher OF, produit…" value={search}
+            onChange={e => setSearch(e.target.value)} style={s.inputSm} />
+          <div style={{ display:"flex", gap:6, marginTop:8 }}>
+            {["TOUS","EN_COURS","TERMINE"].map(st => (
+              <button key={st} onClick={() => setFilterStatut(st)}
+                style={{ ...s.filterBtn, ...(filterStatut===st ? s.filterBtnActive : {}) }}>
+                {st==="TOUS"?"Tous":st==="EN_COURS"?"En cours":"Terminés"}
               </button>
             ))}
           </div>
         </div>
+        <div style={{ maxHeight:520, overflowY:"auto" }}>
+          {filtered.length === 0 && (
+            <div style={{ padding:"2rem", textAlign:"center", color:"#94a3b8" }}>Aucune production</div>
+          )}
+          {filtered.map(p => (
+            <div key={p.production_id||p.id} onClick={() => loadLot(p.production_id||p.id)}
+              style={{ padding:"0.85rem 1rem", borderBottom:"1px solid #f8fafc", cursor:"pointer",
+                background: selectedId===(p.production_id||p.id) ? "#eff6ff" : "transparent",
+                borderLeft: selectedId===(p.production_id||p.id) ? "3px solid #2563eb" : "3px solid transparent" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                <span style={{ fontWeight:700, fontSize:13, color:"#0f172a" }}>{p.of_numero}</span>
+                <StatutBadge statut={p.statut} />
+              </div>
+              <div style={{ fontSize:12, color:"#64748b", marginTop:3 }}>{p.produit_fini}</div>
+              <div style={{ display:"flex", gap:12, marginTop:4, fontSize:11, color:"#94a3b8" }}>
+                <span>🎯 {fmt(p.quantite_produit_fini)} kg</span>
+                <span>📊 {fmtPct(p.rendement_global)}</span>
+                <span>📅 {p.date_production||p.date}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
-      {/* Loading state */}
-      {loading && (
-        <div style={{ textAlign: 'center', padding: '60px', background: 'white', borderRadius: '12px' }}>
-          <div style={{
-            width: '40px',
-            height: '40px',
-            border: '3px solid #e9ecef',
-            borderTop: '3px solid #667eea',
-            borderRadius: '50%',
-            animation: 'spin 1s linear infinite',
-            margin: '0 auto 15px'
-          }} />
-          <p style={{ color: '#6c757d' }}>Chargement des données...</p>
+      {/* Fiche détail */}
+      {loading ? (
+        <div style={{ textAlign:"center", padding:"4rem", color:"#94a3b8" }}>⏳ Chargement…</div>
+      ) : lot ? (
+        <LotDetail lot={lot} />
+      ) : (
+        <div style={{ textAlign:"center", padding:"4rem", color:"#94a3b8" }}>
+          <div style={{ fontSize:40, marginBottom:12 }}>🔍</div>
+          <div>Sélectionnez une production pour voir sa fiche de traçabilité</div>
         </div>
       )}
+    </div>
+  );
+};
 
-      {/* Results */}
-      {!loading && selectedLot ? (
-        <div>
-          {/* Lot summary */}
-          <div style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '24px',
-            marginBottom: '24px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-            border: '1px solid #e9ecef'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '20px' }}>
-              <div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                  <h2 style={{ margin: 0, fontSize: '24px', fontFamily: 'monospace', fontWeight: '600', color: '#212529' }}>{selectedLot.numero_lot}</h2>
-                  <span style={{
-                    padding: '4px 12px',
-                    background: getStatusColor(selectedLot.status),
-                    borderRadius: '20px',
-                    fontSize: '12px',
-                    fontWeight: '600'
-                  }}>
-                    {getStatusLabel(selectedLot.status)}
-                  </span>
-                </div>
-                <p style={{ margin: '8px 0 4px 0', fontSize: '16px', fontWeight: '500', color: '#495057' }}>{selectedLot.produit}</p>
-                <p style={{ margin: 0, fontSize: '13px', color: '#6c757d' }}>Ordre de fabrication: {selectedLot.ordre_id || 'N/A'}</p>
-              </div>
-              <button 
-                onClick={() => exportToPDF(selectedLot)} 
-                style={{
-                  padding: '8px 16px',
-                  background: '#dc3545',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '8px',
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-1px)'}
-                onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}
-              >
-                <FileText size={14} /> Exporter PDF
-              </button>
+const LotDetail = ({ lot }) => {
+  const etapesDone = (lot.etapes||[]).filter(e => String(e.statut).includes("TERMINE")).length;
+  const pct = lot.nb_etapes_total ? Math.round((etapesDone/lot.nb_etapes_total)*100) : 0;
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
+      <div style={{ background:"#fff", borderRadius:14, padding:"1.25rem 1.5rem", boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
+          <div>
+            <div style={{ fontSize:11, color:"#94a3b8", fontWeight:600, textTransform:"uppercase", letterSpacing:"0.08em" }}>
+              Ordre de fabrication
             </div>
+            <div style={{ fontSize:20, fontWeight:800, color:"#0f172a" }}>{lot.of_numero}</div>
+            <div style={{ fontSize:14, color:"#64748b", marginTop:2 }}>{lot.produit_fini}</div>
+          </div>
+          <StatutBadge statut={lot.statut} />
+        </div>
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"1rem", marginTop:"1.25rem" }}>
+          {[
+            { label:"Produit fini",     value:fmt(lot.quantite_produit_fini," kg"),     color:"#2563eb" },
+            { label:"Matière première", value:fmt(lot.quantite_matiere_premiere," kg"), color:"#8b5cf6" },
+            { label:"Rendement global", value:fmtPct(lot.rendement_global),             color:"#10b981" },
+            { label:"Total rebuts",     value:fmt(lot.total_rebuts," kg"),              color:"#ef4444" },
+          ].map(k => (
+            <div key={k.label} style={{ textAlign:"center", padding:"0.6rem",
+              background:"#f8fafc", borderRadius:10 }}>
+              <div style={{ fontSize:11, color:"#94a3b8", fontWeight:600 }}>{k.label}</div>
+              <div style={{ fontSize:16, fontWeight:700, color:k.color, marginTop:2 }}>{k.value}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop:"1.25rem" }}>
+          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, color:"#64748b", marginBottom:6 }}>
+            <span>Avancement pipeline</span>
+            <span style={{ fontWeight:700 }}>{etapesDone}/{lot.nb_etapes_total||11} étapes — {pct}%</span>
+          </div>
+          <div style={{ background:"#e2e8f0", borderRadius:99, height:8 }}>
+            <div style={{ width:`${pct}%`, height:8, borderRadius:99,
+              background:pct===100?"#10b981":"linear-gradient(90deg,#2563eb,#3b82f6)",
+              transition:"width 0.5s" }} />
+          </div>
+        </div>
+      </div>
 
-            {/* KPIs */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' }}>
-              <div style={{
-                background: '#f8f9fa',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #e9ecef'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>CRÉÉ LE</span>
-                  <Calendar size={14} color="#667eea" />
+      {/* Tableau étapes */}
+      <div style={{ background:"#fff", borderRadius:14, boxShadow:"0 1px 4px rgba(0,0,0,0.07)", overflow:"hidden" }}>
+        <div style={{ padding:"1rem 1.25rem", borderBottom:"1px solid #f1f5f9" }}>
+          <h3 style={{ margin:0, fontSize:14, fontWeight:700, color:"#0f172a" }}>🔗 Suivi étape par étape</h3>
+        </div>
+        <div style={{ overflowX:"auto" }}>
+          <table style={s.table}>
+            <thead>
+              <tr style={s.thead}>
+                {["#","Machine","Opérateur","Entrée (kg)","Sortie (kg)","Perte (kg)","Rendement","Début","Fin","Statut"].map(h =>
+                  <th key={h} style={s.th}>{h}</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              {(lot.etapes||[]).map((e,i) => {
+                const isTermine = String(e.statut).includes("TERMINE");
+                const isEnCours = String(e.statut).includes("EN_COURS");
+                const rend = parseFloat(e.rendement);
+                const rendColor = rend>=95?"#10b981":rend>=85?"#f59e0b":"#ef4444";
+                return (
+                  <tr key={e.ordre} style={{ background:i%2===0?"#fff":"#fafafa" }}>
+                    <td style={{ ...s.td, fontWeight:700, color:"#475569", width:32 }}>{e.ordre}</td>
+                    <td style={s.td}>
+                      <div style={{ fontWeight:600, fontSize:12, fontFamily:"monospace", color:"#0f172a" }}>{e.machine}</div>
+                      <div style={{ fontSize:11, color:"#94a3b8" }}>{e.nom_machine}</div>
+                    </td>
+                    <td style={{ ...s.td, fontSize:12 }}>{e.operateur||"—"}</td>
+                    <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace" }}>
+                      {isTermine||isEnCours ? fmt(e.qte_entree) : <span style={{ color:"#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace" }}>
+                      {isTermine ? fmt(e.qte_sortie) : <span style={{ color:"#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace", color:"#ef4444" }}>
+                      {isTermine ? fmt(e.perte) : <span style={{ color:"#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ ...s.td, textAlign:"right" }}>
+                      {isTermine && e.rendement
+                        ? <span style={{ color:rendColor, fontWeight:700 }}>{fmtPct(e.rendement)}</span>
+                        : <span style={{ color:"#cbd5e1" }}>—</span>}
+                    </td>
+                    <td style={{ ...s.td, fontSize:11, color:"#64748b" }}>{e.debut||"—"}</td>
+                    <td style={{ ...s.td, fontSize:11, color:"#64748b" }}>{e.fin||"—"}</td>
+                    <td style={s.td}>
+                      <StatutBadge statut={isTermine?"TERMINE":isEnCours?"EN_COURS":"EN_ATTENTE"} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Rebuts */}
+      {lot.rebuts?.length > 0 && (
+        <div style={{ background:"#fff", borderRadius:14, boxShadow:"0 1px 4px rgba(0,0,0,0.07)", overflow:"hidden" }}>
+          <div style={{ padding:"1rem 1.25rem", borderBottom:"1px solid #f1f5f9" }}>
+            <h3 style={{ margin:0, fontSize:14, fontWeight:700, color:"#0f172a" }}>
+              ⚠️ Rebuts ({lot.rebuts.length})
+            </h3>
+          </div>
+          <table style={s.table}>
+            <thead>
+              <tr style={s.thead}>
+                {["Machine","Type de défaut","Quantité (kg)","Date"].map(h => <th key={h} style={s.th}>{h}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {lot.rebuts.map((r,i) => (
+                <tr key={r.id} style={{ background:i%2===0?"#fff":"#fafafa" }}>
+                  <td style={s.td}><span style={s.codeBadge}>{r.machine}</span></td>
+                  <td style={s.td}>{r.defaut}</td>
+                  <td style={{ ...s.td, fontFamily:"monospace", color:"#ef4444", fontWeight:700 }}>{fmt(r.quantite)} kg</td>
+                  <td style={{ ...s.td, fontSize:12, color:"#64748b" }}>{r.date}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  ONGLET 2 – HISTORISATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+const Historisation = ({ productions }) => {
+  const [historique, setHistorique] = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [filterProd, setFilterProd] = useState("");
+  const [filterMachine, setFilterMachine] = useState("");
+  const [filterEvt, setFilterEvt]   = useState("");
+
+  const loadHistorique = useCallback(async () => {
+    setLoading(true);
+    try {
+      try {
+        const params = {};
+        if (filterProd)    params.production_id = parseInt(filterProd);
+        if (filterMachine) params.machine = filterMachine;
+        if (filterEvt)     params.evenement = filterEvt;
+        const r = await axios.get(`${TRACE_URL}/historique`, { params });
+        setHistorique(r.data);
+      } catch {
+        const r = await axios.get(PROD_URL);
+        const hist = [];
+        for (const p of r.data) {
+          try {
+            const det = await axios.get(`${PROD_URL}${p.id}`);
+            hist.push({ id:`launch-${p.id}`, evenement:"production_lancee",
+              of_id:p.of_id, production_id:p.id, machine:null, etape_id:null,
+              quantite_produit_fini:p.quantite_produit_fini,
+              quantite_matiere_premiere:p.quantite_matiere_premiere, date:p.date });
+            for (const e of (det.data.etapes||[])) {
+              if (String(e.statut).includes("TERMINE"))
+                hist.push({ id:`etape-${e.id}`, evenement:"etape_validee",
+                  of_id:p.of_id, production_id:p.id, etape_id:e.id, machine:e.machine,
+                  quantite_produit_fini:e.qte_sortie, quantite_matiere_premiere:e.qte_entree, date:e.date });
+            }
+          } catch { /* ignore */ }
+        }
+        hist.sort((a,b) => new Date(b.date) - new Date(a.date));
+        setHistorique(hist);
+      }
+    } finally { setLoading(false); }
+  }, [filterProd, filterMachine, filterEvt]);
+
+  useEffect(() => { loadHistorique(); }, [loadHistorique]);
+
+  const grouped = useMemo(() => {
+    const map = {};
+    historique.forEach(h => { const d=h.date||"?"; if (!map[d]) map[d]=[]; map[d].push(h); });
+    return Object.entries(map).sort((a,b) => new Date(b[0]) - new Date(a[0]));
+  }, [historique]);
+
+  return (
+    <div style={{ display:"flex", flexDirection:"column", gap:"1.25rem" }}>
+      <div style={{ background:"#fff", borderRadius:14, padding:"1rem 1.25rem",
+        boxShadow:"0 1px 4px rgba(0,0,0,0.07)", display:"flex", gap:"1rem", flexWrap:"wrap" }}>
+        <select style={{ ...s.selectSm, minWidth:200 }} value={filterProd}
+          onChange={e => setFilterProd(e.target.value)}>
+          <option value="">📋 Toutes les productions</option>
+          {productions.map(p => (
+            <option key={p.production_id||p.id} value={p.production_id||p.id}>
+              {p.of_numero} – {p.produit_fini}
+            </option>
+          ))}
+        </select>
+        <select style={{ ...s.selectSm, minWidth:180 }} value={filterMachine}
+          onChange={e => setFilterMachine(e.target.value)}>
+          <option value="">🏭 Toutes les machines</option>
+          {SEQUENCE_MACHINES.map(m => <option key={m.code} value={m.code}>{m.code} – {m.nom}</option>)}
+        </select>
+        <select style={{ ...s.selectSm, minWidth:160 }} value={filterEvt}
+          onChange={e => setFilterEvt(e.target.value)}>
+          <option value="">📌 Tous les événements</option>
+          <option value="production_lancee">🚀 Lancement</option>
+          <option value="etape_validee">✅ Étape validée</option>
+          <option value="rebut">⚠️ Rebut</option>
+        </select>
+        <button onClick={loadHistorique} style={s.btnRefresh}>↻ Actualiser</button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign:"center", padding:"3rem", color:"#94a3b8" }}>⏳ Chargement…</div>
+      ) : grouped.length === 0 ? (
+        <div style={{ textAlign:"center", padding:"3rem", color:"#94a3b8" }}>Aucun événement trouvé</div>
+      ) : (
+        grouped.map(([date, events]) => (
+          <div key={date}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#64748b", textTransform:"uppercase",
+              letterSpacing:"0.1em", marginBottom:8, paddingLeft:4 }}>📅 {date}</div>
+            <div style={{ background:"#fff", borderRadius:14, overflow:"hidden",
+              boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+              {events.map((h,i) => (
+                <div key={h.id} style={{ display:"grid", gridTemplateColumns:"36px 1fr auto",
+                  gap:"0.75rem", alignItems:"center", padding:"0.75rem 1.25rem",
+                  borderBottom:i===events.length-1?"none":"1px solid #f8fafc",
+                  background:h.evenement==="rebut"?"#fff5f5":"transparent" }}>
+                  <div style={{ width:32, height:32, borderRadius:"50%",
+                    background:h.evenement==="production_lancee"?"#eff6ff":h.evenement==="etape_validee"?"#f0fdf4":"#fff5f5",
+                    display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, flexShrink:0 }}>
+                    {h.evenement==="production_lancee"?"🚀":h.evenement==="etape_validee"?"✅":"⚠️"}
+                  </div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:600, color:"#0f172a" }}>
+                      {EVENEMENT_LABELS[h.evenement]||h.evenement}
+                    </div>
+                    <div style={{ fontSize:11, color:"#94a3b8", marginTop:2, display:"flex", gap:12 }}>
+                      {h.production_id && <span>Prod #{h.production_id}</span>}
+                      {h.machine && <span><span style={s.codeBadge}>{h.machine}</span></span>}
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right", fontSize:11, color:"#64748b" }}>
+                    {h.quantite_produit_fini != null &&
+                      <div>PF : <strong>{fmt(h.quantite_produit_fini)} kg</strong></div>}
+                    {h.quantite_matiere_premiere != null &&
+                      <div>MP : <strong>{fmt(h.quantite_matiere_premiere)} kg</strong></div>}
+                  </div>
                 </div>
-                <p style={{ margin: 0, fontSize: '15px', fontFamily: 'monospace', fontWeight: '500', color: '#212529' }}>{selectedLot.date_creation}</p>
-              </div>
-              <div style={{
-                background: '#f8f9fa',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #e9ecef'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>QTÉ INITIALE</span>
-                  <Package size={14} color="#667eea" />
-                </div>
-                <p style={{ margin: 0, fontSize: '15px', fontFamily: 'monospace', fontWeight: '500', color: '#212529' }}>{selectedLot.quantite_initiale}</p>
-              </div>
-              <div style={{
-                background: '#f8f9fa',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #e9ecef'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>QTÉ FINALE</span>
-                  <CheckCircle2 size={14} color="#28a745" />
-                </div>
-                <p style={{ margin: 0, fontSize: '15px', fontFamily: 'monospace', fontWeight: '500', color: '#212529' }}>{selectedLot.quantite_finale}</p>
-              </div>
-              <div style={{
-                background: '#f8f9fa',
-                padding: '12px',
-                borderRadius: '8px',
-                border: '1px solid #e9ecef'
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>RENDEMENT</span>
-                  <Activity size={14} color="#667eea" />
-                </div>
-                <p style={{ margin: 0, fontSize: '15px', fontFamily: 'monospace', fontWeight: '500', color: '#212529' }}>
-                  {selectedLot.quantite_initiale > 0 
-                    ? ((selectedLot.quantite_finale / selectedLot.quantite_initiale) * 100).toFixed(1) 
-                    : '0'}%
-                </p>
-              </div>
+              ))}
             </div>
           </div>
+        ))
+      )}
+    </div>
+  );
+};
 
-          {/* Historique de production */}
-          <div style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '24px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-            border: '1px solid #e9ecef'
+// ─────────────────────────────────────────────────────────────────────────────
+//  ONGLET 3 – ASSOCIATION MACHINES  (avec données MQTT simulateur)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AssociationMachines = ({ realtimeByRef, mqttStatus }) => {
+  const [machinesTrace, setMachinesTrace] = useState([]);
+  const [loading, setLoading]             = useState(false);
+  const [selected, setSelected]           = useState(null);
+
+  // Charge les stats de traçabilité depuis le backend
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        try {
+          const r = await axios.get(`${TRACE_URL}/machines`);
+          setMachinesTrace(r.data);
+        } catch {
+          // Fallback local
+          const r = await axios.get(PROD_URL);
+          const prods = r.data;
+          const machMap = {};
+          SEQUENCE_MACHINES.forEach(m => {
+            machMap[m.code] = { machine_code:m.code, nom_machine:m.nom,
+              nb_productions:0, qte_entree_total:0, qte_sortie_total:0,
+              total_rebuts:0, derniere_date:null };
+          });
+          for (const p of prods) {
+            try {
+              const det = await axios.get(`${PROD_URL}${p.id}`);
+              for (const e of (det.data.etapes||[])) {
+                if (!machMap[e.machine]) continue;
+                machMap[e.machine].nb_productions++;
+                machMap[e.machine].qte_entree_total += e.qte_entree||0;
+                machMap[e.machine].qte_sortie_total += e.qte_sortie||0;
+                if (!machMap[e.machine].derniere_date||e.date>machMap[e.machine].derniere_date)
+                  machMap[e.machine].derniere_date = e.date;
+              }
+            } catch { /* ignore */ }
+          }
+          setMachinesTrace(Object.values(machMap).map(m => ({
+            ...m,
+            rendement_moyen: m.qte_entree_total > 0
+              ? parseFloat(((m.qte_sortie_total/m.qte_entree_total)*100).toFixed(1)) : null,
+          })));
+        }
+      } finally { setLoading(false); }
+    };
+    load();
+  }, []);
+
+  // ── Join traçabilité DB + MQTT simulateur ─────────────────────────────────
+  // Le simulateur publie avec machine_reference (= reference DB, ex: "CT-ALIM-01")
+  // realtimeByRef est indexé par machineId qui vient du payload MQTT :
+  //   payload.machineId = machine_reference  (normalisé en uppercase dans telemetrySocket)
+  const enriched = useMemo(() => {
+    return machinesTrace.map(m => {
+      // Cherche dans realtimeByRef par code machine (CT-ALIM-01, etc.)
+      const key  = m.machine_code?.toUpperCase();
+      const rt   = realtimeByRef[key] || realtimeByRef[m.machine_code] || null;
+      return {
+        ...m,
+        // Données MQTT simulateur
+        temperature : rt?.temperature  ?? null,
+        pression    : rt?.pressure     ?? null,  // payload simulateur : "pressure"
+        vitesse     : rt?.speed        ?? null,  // payload simulateur : "speed"
+        vibration   : rt?.vibration    ?? null,
+        production  : rt?.production   ?? null,  // cumul depuis boot
+        etat        : rt?.state        ?? null,  // MARCHE | PAUSE | ERREUR | MAINTENANCE
+        lastUpdate  : rt?.lastUpdate   ?? null,
+        hasMqtt     : rt !== null,
+      };
+    });
+  }, [machinesTrace, realtimeByRef]);
+
+  const selectedMachine = enriched.find(m => m.machine_code === selected);
+
+  if (loading) return (
+    <div style={{ textAlign:"center", padding:"3rem", color:"#94a3b8" }}>⏳ Chargement…</div>
+  );
+
+  return (
+    <div style={{ display:"grid", gridTemplateColumns:"1fr 380px", gap:"1.5rem", alignItems:"start" }}>
+
+      {/* ── Gauche : pipeline + tableau ── */}
+      <div style={{ display:"flex", flexDirection:"column", gap:"1rem" }}>
+
+        {/* Bandeau MQTT status */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+          background:"#fff", borderRadius:12, padding:"0.6rem 1rem",
+          boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+          <span style={{ fontSize:12, color:"#64748b", fontWeight:500 }}>
+            🔌 Simulateur MQTT
+          </span>
+          <span style={{
+            display:"inline-flex", alignItems:"center", gap:6,
+            fontSize:12, fontWeight:700,
+            color: mqttStatus==="connected" ? "#10b981" : "#ef4444",
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-              <Activity size={20} color="#667eea" />
-              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '600', color: '#212529' }}>HISTORIQUE DE PRODUCTION</h3>
-              <span style={{ marginLeft: 'auto', fontSize: '12px', color: '#6c757d', background: '#f8f9fa', padding: '4px 8px', borderRadius: '6px' }}>
-                {selectedLot.steps?.length || 0} étape(s)
-              </span>
-            </div>
+            <span style={{ width:7, height:7, borderRadius:"50%",
+              background: mqttStatus==="connected" ? "#10b981" : "#ef4444",
+              animation: mqttStatus==="connected" ? "pulse 2s infinite" : "none" }} />
+            {mqttStatus==="connected" ? "Connecté — données en temps réel" : "Déconnecté"}
+          </span>
+          <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+        </div>
 
-            {selectedLot.steps && selectedLot.steps.length > 0 ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                {selectedLot.steps.map((step, index) => (
-                  <div key={step.id || index} style={{ 
-                    border: `2px solid ${step.status === 'defect' ? '#ffc107' : step.status === 'completed' ? '#28a745' : '#17a2b8'}`,
-                    borderRadius: '10px',
-                    background: 'white',
-                    overflow: 'hidden',
-                    transition: 'all 0.2s'
+        {/* Pipeline visuel */}
+        <div style={{ background:"#fff", borderRadius:14, padding:"1.25rem",
+          boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+          <h3 style={{ margin:"0 0 1rem", fontSize:14, fontWeight:700, color:"#0f172a" }}>
+            🔗 Séquence de production — Atelier Cardage
+          </h3>
+          <div style={{ display:"flex", alignItems:"stretch", flexWrap:"wrap", gap:0 }}>
+            {SEQUENCE_MACHINES.map((m,i) => {
+              const data = enriched.find(d => d.machine_code===m.code);
+              const rend = data?.rendement_moyen;
+              const rendColor = rend==null?"#e2e8f0":rend>=95?"#10b981":rend>=85?"#f59e0b":"#ef4444";
+              const etatC = data?.etat ? ETAT_COLORS[data.etat] : null;
+              const isSelected = selected===m.code;
+              return (
+                <React.Fragment key={m.code}>
+                  <div onClick={() => setSelected(isSelected?null:m.code)} style={{
+                    background: isSelected?"#eff6ff":"#f8fafc",
+                    border: isSelected?"2px solid #2563eb":"1.5px solid #e2e8f0",
+                    borderRadius:10, padding:"0.5rem 0.55rem", textAlign:"center",
+                    minWidth:68, cursor:"pointer", transition:"all 0.12s",
+                    position:"relative",
                   }}>
-                    <div 
-                      onClick={() => toggleStepDetails(step.id || index)}
-                      style={{ 
-                        padding: '15px 20px',
-                        background: '#f8f9fa',
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        borderBottom: expandedSteps[step.id || index] ? '1px solid #e9ecef' : 'none'
-                      }}
-                    >
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
-                        {step.status === 'completed' && <CheckCircle2 size={20} color="#28a745" />}
-                        {step.status === 'defect' && <AlertTriangle size={20} color="#ffc107" />}
-                        {step.status === 'in-progress' && <Clock size={20} color="#17a2b8" />}
-                        <div>
-                          <div style={{ fontWeight: '600', fontSize: '14px', color: '#212529' }}>{step.operation}</div>
-                          <div style={{ fontSize: '12px', color: '#6c757d' }}>{step.machine} • {step.created_at || step.timestamp || 'Date non spécifiée'}</div>
-                        </div>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                        <span style={{ fontSize: '11px', padding: '3px 10px', background: getStatusColor(step.status), borderRadius: '12px', fontWeight: '500' }}>
-                          {getStatusLabel(step.status)}
-                        </span>
-                        {expandedSteps[step.id || index] ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      </div>
+                    {/* Point état MQTT */}
+                    {data?.hasMqtt && (
+                      <span style={{ position:"absolute", top:4, right:4,
+                        width:6, height:6, borderRadius:"50%",
+                        background: etatC?.color || "#94a3b8" }} />
+                    )}
+                    <div style={{ fontSize:9, color:"#94a3b8", fontWeight:700 }}>#{m.ordre}</div>
+                    <div style={{ fontSize:10, fontWeight:700, color:"#0f172a", fontFamily:"monospace" }}>
+                      {m.code.split("-")[1]}
                     </div>
-
-                    {expandedSteps[step.id || index] && (
-                      <div style={{ padding: '20px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '15px', marginBottom: '15px' }}>
-                          <div>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OPÉRATEUR</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                              <User size={14} color="#667eea" />
-                              <span style={{ fontSize: '13px', color: '#495057' }}>{step.operateur || 'N/A'}</span>
-                            </div>
-                          </div>
-                          <div>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>DURÉE</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                              <Clock size={14} color="#667eea" />
-                              <span style={{ fontSize: '13px', color: '#495057' }}>{formatDuration(step.duree_min)}</span>
-                            </div>
-                          </div>
-                          <div>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px' }}>QUANTITÉ</span>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                              <Package size={14} color="#667eea" />
-                              <span style={{ fontSize: '13px', color: '#495057' }}>{step.quantite || 'N/A'} unités</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        {step.parametres && Object.keys(step.parametres).length > 0 && (
-                          <div style={{ marginBottom: '15px' }}>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', display: 'block' }}>
-                              PARAMÈTRES TECHNIQUES
-                            </span>
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', background: '#f8f9fa', padding: '12px', borderRadius: '8px' }}>
-                              {step.parametres.temperature && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Thermometer size={14} color="#667eea" />
-                                  <span style={{ fontSize: '13px', color: '#495057' }}>{step.parametres.temperature}°C</span>
-                                </div>
-                              )}
-                              {step.parametres.pression && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Gauge size={14} color="#667eea" />
-                                  <span style={{ fontSize: '13px', color: '#495057' }}>{step.parametres.pression} bar</span>
-                                </div>
-                              )}
-                              {step.parametres.vitesse && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Zap size={14} color="#667eea" />
-                                  <span style={{ fontSize: '13px', color: '#495057' }}>{step.parametres.vitesse} RPM</span>
-                                </div>
-                              )}
-                              {step.parametres.couple && (
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <Settings size={14} color="#667eea" />
-                                  <span style={{ fontSize: '13px', color: '#495057' }}>{step.parametres.couple} Nm</span>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
-
-                        {step.qualite && (
-                          <div>
-                            <span style={{ fontSize: '11px', fontWeight: '600', color: '#6c757d', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '8px', display: 'block' }}>
-                              CONTRÔLE QUALITÉ
-                            </span>
-                            <div style={{ 
-                              padding: '12px', 
-                              borderRadius: '8px', 
-                              background: step.qualite.conforme ? '#d4edda' : '#f8d7da',
-                              borderLeft: `4px solid ${step.qualite.conforme ? '#28a745' : '#dc3545'}`
-                            }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                {step.qualite.conforme ? <CheckCircle2 size={14} color="#28a745" /> : <AlertTriangle size={14} color="#dc3545" />}
-                                <span style={{ fontSize: '13px', fontWeight: '500', color: step.qualite.conforme ? '#155724' : '#721c24' }}>
-                                  {step.qualite.conforme ? 'Conforme' : 'Non-conforme'}
-                                </span>
-                              </div>
-                              {step.qualite.controles && (
-                                <div style={{ fontSize: '12px', marginTop: '4px', color: step.qualite.conforme ? '#155724' : '#721c24' }}>
-                                  {Array.isArray(step.qualite.controles) 
-                                    ? step.qualite.controles.join(', ')
-                                    : step.qualite.controles}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        )}
+                    <div style={{ fontSize:9, color:"#64748b" }}>{m.nom}</div>
+                    {rend != null && (
+                      <div style={{ fontSize:10, fontWeight:700, color:rendColor, marginTop:2 }}>
+                        {rend.toFixed(0)}%
+                      </div>
+                    )}
+                    {/* Température mini si MQTT dispo */}
+                    {data?.temperature != null && (
+                      <div style={{ fontSize:9, color:"#ef4444", marginTop:1 }}>
+                        {data.temperature}°C
                       </div>
                     )}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ textAlign: 'center', padding: '60px', background: '#f8f9fa', borderRadius: '8px', color: '#6c757d' }}>
-                <Package size={48} style={{ marginBottom: '15px', opacity: 0.5 }} />
-                <p>Aucune étape de production enregistrée</p>
-              </div>
-            )}
+                  {i < SEQUENCE_MACHINES.length-1 && (
+                    <span style={{ color:"#94a3b8", fontSize:10, margin:"0 1px", alignSelf:"center" }}>→</span>
+                  )}
+                </React.Fragment>
+              );
+            })}
+          </div>
+          <div style={{ fontSize:11, color:"#94a3b8", marginTop:8 }}>
+            Le point coloré indique l'état MQTT. Cliquez pour voir le détail.
           </div>
         </div>
-      ) : (
-        !loading && (
-          /* All lots view */
-          <div style={{
-            background: 'white',
-            borderRadius: '12px',
-            padding: '24px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-            border: '1px solid #e9ecef'
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '15px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <FileText size={20} color="#667eea" />
-                <h3 style={{ margin: 0, fontSize: '15px', fontWeight: '600', color: '#212529' }}>TOUS LES LOTS</h3>
-                <span style={{ fontSize: '12px', background: '#e9ecef', padding: '2px 8px', borderRadius: '20px', color: '#495057' }}>
-                  {filteredLots.length} lots
+
+        {/* Tableau récap */}
+        <div style={{ background:"#fff", borderRadius:14, overflow:"hidden",
+          boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+          <div style={{ overflowX:"auto" }}>
+            <table style={s.table}>
+              <thead>
+                <tr style={s.thead}>
+                  {["Machine","Nom","Nb prod.","Rend. moy.","Rebuts","État MQTT","Temp.","Pression","Vitesse","Dernier signal"].map(h =>
+                    <th key={h} style={s.th}>{h}</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {enriched.map((m,i) => {
+                  const rendColor = m.rendement_moyen==null?"#94a3b8"
+                    :m.rendement_moyen>=95?"#10b981":m.rendement_moyen>=85?"#f59e0b":"#ef4444";
+                  return (
+                    <tr key={m.machine_code}
+                      onClick={() => setSelected(m.machine_code===selected?null:m.machine_code)}
+                      style={{ background:m.machine_code===selected?"#eff6ff":i%2===0?"#fff":"#fafafa",
+                        cursor:"pointer" }}>
+                      <td style={s.td}><span style={s.codeBadge}>{m.machine_code}</span></td>
+                      <td style={{ ...s.td, fontSize:12 }}>{m.nom_machine}</td>
+                      <td style={{ ...s.td, textAlign:"center", fontWeight:600 }}>{m.nb_productions}</td>
+                      <td style={{ ...s.td, textAlign:"right", color:rendColor, fontWeight:700 }}>
+                        {fmtPct(m.rendement_moyen)}
+                      </td>
+                      <td style={{ ...s.td, textAlign:"right", color:"#ef4444", fontFamily:"monospace" }}>
+                        {fmt(m.total_rebuts)} kg
+                      </td>
+                      <td style={s.td}><EtatBadge etat={m.etat} /></td>
+                      {/* Données simulateur */}
+                      <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace",
+                        color: m.temperature!=null?"#ef4444":"#cbd5e1" }}>
+                        {m.temperature!=null ? `${m.temperature}°C` : "—"}
+                      </td>
+                      <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace",
+                        color: m.pression!=null?"#2563eb":"#cbd5e1" }}>
+                        {m.pression!=null ? `${m.pression} bar` : "—"}
+                      </td>
+                      <td style={{ ...s.td, textAlign:"right", fontFamily:"monospace",
+                        color: m.vitesse!=null?"#8b5cf6":"#cbd5e1" }}>
+                        {m.vitesse!=null ? `${m.vitesse} rpm` : "—"}
+                      </td>
+                      <td style={{ ...s.td, fontSize:11, color:"#94a3b8" }}>
+                        {fmtTs(m.lastUpdate)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Droite : panneau détail machine ── */}
+      <div>
+        {selectedMachine
+          ? <MachineDetailPanel machine={selectedMachine} />
+          : (
+            <div style={{ background:"#fff", borderRadius:14, padding:"3rem 2rem",
+              boxShadow:"0 1px 4px rgba(0,0,0,0.07)", textAlign:"center", color:"#94a3b8" }}>
+              <div style={{ fontSize:36, marginBottom:12 }}>🏭</div>
+              <div style={{ fontSize:13 }}>Sélectionnez une machine<br />pour voir ses paramètres</div>
+            </div>
+          )}
+      </div>
+    </div>
+  );
+};
+
+// ── Panneau détail machine (traçabilité + MQTT) ───────────────────────────────
+const MachineDetailPanel = ({ machine: m }) => {
+  const rendColor = m.rendement_moyen==null?"#64748b"
+    :m.rendement_moyen>=95?"#10b981":m.rendement_moyen>=85?"#f59e0b":"#ef4444";
+
+  return (
+    <div style={{ background:"#fff", borderRadius:14, overflow:"hidden",
+      boxShadow:"0 1px 4px rgba(0,0,0,0.07)" }}>
+
+      {/* Header */}
+      <div style={{ padding:"1.25rem", background:"#0f172a", color:"#fff" }}>
+        <div style={{ fontSize:11, color:"#94a3b8", fontWeight:600, textTransform:"uppercase" }}>Machine</div>
+        <div style={{ fontSize:18, fontWeight:800, fontFamily:"monospace" }}>{m.machine_code}</div>
+        <div style={{ fontSize:13, color:"#64748b", marginTop:2 }}>{m.nom_machine}</div>
+        {m.hasMqtt && <div style={{ marginTop:8 }}><EtatBadge etat={m.etat} /></div>}
+      </div>
+
+      <div style={{ padding:"1.25rem", display:"flex", flexDirection:"column", gap:"0.75rem" }}>
+
+        {/* ── Paramètres MQTT simulateur ── */}
+        {m.hasMqtt ? (
+          <>
+            <div style={{ fontSize:12, fontWeight:700, color:"#0f172a", textTransform:"uppercase",
+              letterSpacing:"0.08em", marginBottom:4 }}>
+              📡 Paramètres temps réel (simulateur)
+            </div>
+
+            {/* Jauge Température */}
+            <MiniGauge
+              label="Température"
+              value={m.temperature}
+              unit="°C"
+              min={20}
+              max={180}
+              color={m.temperature>130?"#ef4444":m.temperature>80?"#f59e0b":"#10b981"}
+            />
+            {/* Jauge Pression */}
+            <MiniGauge
+              label="Pression"
+              value={m.pression}
+              unit="bar"
+              min={0}
+              max={5}
+              color="#2563eb"
+            />
+            {/* Jauge Vitesse */}
+            <MiniGauge
+              label="Vitesse"
+              value={m.vitesse}
+              unit="RPM"
+              min={0}
+              max={1500}
+              color="#8b5cf6"
+            />
+            {/* Vibration */}
+            {m.vibration != null && (
+              <MiniGauge
+                label="Vibration"
+                value={m.vibration}
+                unit="g"
+                min={0}
+                max={0.2}
+                color={m.vibration>0.08?"#ef4444":"#10b981"}
+              />
+            )}
+            {/* Production cumulée */}
+            {m.production != null && (
+              <div style={{ display:"flex", justifyContent:"space-between", padding:"0.5rem 0",
+                borderTop:"1px solid #f1f5f9", marginTop:4 }}>
+                <span style={{ fontSize:12, color:"#64748b" }}>Production (session)</span>
+                <span style={{ fontSize:13, fontWeight:700, color:"#0f172a" }}>
+                  {m.production} unités
                 </span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Filter size={16} color="#6c757d" />
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  {[
-                    { value: 'all', label: 'Tous' },
-                    { value: 'completed', label: 'Terminés' },
-                    { value: 'in-progress', label: 'En cours' },
-                    { value: 'rejected', label: 'Rejetés' }
-                  ].map(f => (
-                    <button
-                      key={f.value}
-                      onClick={() => setFilterStatus(f.value)}
-                      style={{ 
-                        padding: '6px 14px', 
-                        border: '2px solid',
-                        borderColor: filterStatus === f.value ? '#667eea' : '#e9ecef',
-                        background: filterStatus === f.value ? '#667eea' : 'white', 
-                        color: filterStatus === f.value ? 'white' : '#6c757d', 
-                        cursor: 'pointer', 
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        borderRadius: '6px',
-                        transition: 'all 0.2s'
-                      }}
-                    >
-                      {f.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '15px' }}>
-              {filteredLots.map(lot => (
-                <button
-                  key={lot.id}
-                  onClick={() => {
-                    setSearchLot(lot.numero_lot);
-                    setSelectedLot(lot);
-                  }}
-                  style={{
-                    textAlign: 'left',
-                    padding: '18px',
-                    border: '2px solid #e9ecef',
-                    borderRadius: '10px',
-                    background: 'white',
-                    cursor: 'pointer',
-                    transition: 'all 0.2s'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.borderColor = '#667eea';
-                    e.currentTarget.style.transform = 'translateY(-2px)';
-                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.1)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.borderColor = '#e9ecef';
-                    e.currentTarget.style.transform = 'translateY(0)';
-                    e.currentTarget.style.boxShadow = 'none';
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
-                    <h4 style={{ margin: 0, fontSize: '15px', fontFamily: 'monospace', fontWeight: '600', color: '#212529' }}>{lot.numero_lot}</h4>
-                    <div style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      background: lot.status === 'completed' ? '#28a745' : lot.status === 'in-progress' ? '#17a2b8' : '#dc3545',
-                      boxShadow: `0 0 0 2px ${lot.status === 'completed' ? '#d4edda' : lot.status === 'in-progress' ? '#d1ecf1' : '#f8d7da'}`
-                    }} />
-                  </div>
-                  <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: '#6c757d', fontWeight: '500' }}>{lot.produit}</p>
-                  <div style={{ fontSize: '12px', color: '#6c757d' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span>Ordre:</span> 
-                      <span style={{ fontFamily: 'monospace', color: '#495057' }}>{lot.ordre_id || 'N/A'}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span>Étapes:</span> 
-                      <span style={{ fontWeight: '500', color: '#495057' }}>{lot.steps?.length || 0}</span>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span>Rendement:</span> 
-                      <span style={{ fontFamily: 'monospace', fontWeight: '500', color: '#495057' }}>
-                        {lot.quantite_initiale > 0 
-                          ? ((lot.quantite_finale / lot.quantite_initiale) * 100).toFixed(1) 
-                          : '0'}%
-                      </span>
-                    </div>
-                  </div>
-                </button>
-              ))}
-            </div>
-
-            {filteredLots.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '60px', color: '#6c757d' }}>
-                <Package size={48} style={{ marginBottom: '15px', opacity: 0.5 }} />
-                <p>Aucun lot trouvé</p>
-              </div>
             )}
+            <div style={{ fontSize:10, color:"#94a3b8", marginTop:4 }}>
+              Dernier signal : {fmtTs(m.lastUpdate)}
+            </div>
+          </>
+        ) : (
+          <div style={{ padding:"1rem", background:"#f8fafc", borderRadius:8, textAlign:"center",
+            fontSize:12, color:"#94a3b8" }}>
+            📡 En attente des données MQTT du simulateur…
           </div>
-        )
+        )}
+
+        <div style={{ borderTop:"1px solid #f1f5f9", paddingTop:"0.75rem", marginTop:4 }}>
+          <div style={{ fontSize:12, fontWeight:700, color:"#0f172a", textTransform:"uppercase",
+            letterSpacing:"0.08em", marginBottom:8 }}>
+            📊 Traçabilité production
+          </div>
+          {[
+            { label:"Productions passées", value:m.nb_productions },
+            { label:"Qté entrante totale", value:fmt(m.qte_entree_total," kg") },
+            { label:"Qté sortante totale", value:fmt(m.qte_sortie_total," kg") },
+            { label:"Rendement moyen",     value:fmtPct(m.rendement_moyen), color:rendColor },
+            { label:"Total rebuts",        value:fmt(m.total_rebuts," kg"), color:"#ef4444" },
+            { label:"Dernier usage",       value:m.derniere_date||"—" },
+          ].map(row => (
+            <div key={row.label} style={{ display:"flex", justifyContent:"space-between",
+              alignItems:"center", padding:"0.45rem 0", borderBottom:"1px solid #f8fafc" }}>
+              <span style={{ fontSize:12, color:"#64748b" }}>{row.label}</span>
+              <span style={{ fontSize:13, fontWeight:700, color:row.color||"#0f172a" }}>
+                {row.value}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  COMPOSANT PRINCIPAL
+// ─────────────────────────────────────────────────────────────────────────────
+
+const Traceability = () => {
+  const [activeTab, setActiveTab]       = useState("lot");
+  const [productions, setProductions]   = useState([]);
+  const [summary, setSummary]           = useState(null);
+  const [loading, setLoading]           = useState(true);
+
+  // ── MQTT : abonnement au simulateur ──────────────────────────────────────
+  // realtimeByRef : { "CT-ALIM-01": { temperature, pressure, speed, state, ... } }
+  const [realtimeByRef, setRealtimeByRef] = useState({});
+  const [mqttStatus, setMqttStatus]       = useState("disconnected");
+
+  useEffect(() => {
+    const unsubscribe = subscribeMachineRealtime({
+      onConnectionChange: (status) => setMqttStatus(status),
+      onMessage: (payload) => {
+        // payload.machineId correspond à machine_reference publié par le simulateur
+        // telemetrySocket normalise en uppercase → ex: "CT-ALIM-01"
+        if (!payload?.machineId) return;
+        const key = String(payload.machineId).toUpperCase();
+        setRealtimeByRef(prev => ({
+          ...prev,
+          [key]: {
+            ...payload,
+            lastUpdate: new Date().toISOString(),
+          },
+        }));
+      },
+    });
+    return unsubscribe;
+  }, []);
+
+  // ── Chargement productions + résumé ──────────────────────────────────────
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true);
+      try {
+        const prodRes = await axios.get(PROD_URL);
+        const prods = prodRes.data.map(p => ({
+          ...p,
+          production_id   : p.id,
+          date_production : p.date,
+          rendement_global: p.quantite_matiere_premiere && p.quantite_produit_fini
+            ? parseFloat(((p.quantite_produit_fini/p.quantite_matiere_premiere)*100).toFixed(1))
+            : null,
+        }));
+        setProductions(prods);
+
+        try {
+          const sumRes = await axios.get(`${TRACE_URL}/summary`);
+          setSummary(sumRes.data);
+        } catch {
+          const termine = prods.filter(p => p.statut==="TERMINE");
+          const totalPF = termine.reduce((a,p) => a+(p.quantite_produit_fini||0), 0);
+          const totalMP = termine.reduce((a,p) => a+(p.quantite_matiere_premiere||0), 0);
+          setSummary({
+            total_productions    : prods.length,
+            productions_terminees: termine.length,
+            productions_en_cours : prods.filter(p=>p.statut==="EN_COURS").length,
+            total_pf_produit     : totalPF,
+            total_mp_consomme    : totalMP,
+            rendement_global     : totalMP>0 ? parseFloat(((totalPF/totalMP)*100).toFixed(1)) : null,
+            total_rebuts         : 0,
+            machines_actives     : SEQUENCE_MACHINES.length,
+          });
+        }
+      } finally { setLoading(false); }
+    };
+    load();
+  }, []);
+
+  const TABS = [
+    { id:"lot",         label:"🔍 Suivi par lot"       },
+    { id:"historique",  label:"📋 Historisation"        },
+    { id:"association", label:"🏭 Association Machines" },
+  ];
+
+  return (
+    <div style={{ padding:"2rem", background:"#f8fafc", minHeight:"100vh",
+      fontFamily:"'Inter',-apple-system,sans-serif" }}>
+
+      {/* Header */}
+      <div style={{ marginBottom:"1.5rem" }}>
+        <h1 style={{ margin:0, fontSize:22, fontWeight:800, color:"#0f172a", letterSpacing:"-0.03em" }}>
+          🔗 Traçabilité
+        </h1>
+        <p style={{ margin:"4px 0 0", color:"#64748b", fontSize:14 }}>
+          Suivi complet des lots · Historisation · Association machines + MQTT
+        </p>
+      </div>
+
+      {/* KPIs globaux */}
+      {summary && (
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(4,1fr)", gap:"1rem", marginBottom:"1.5rem" }}>
+          <KpiCard label="Productions totales"
+            value={summary.total_productions}
+            sub={`${summary.productions_terminees} terminées · ${summary.productions_en_cours} en cours`}
+            color="#2563eb" icon="📦" />
+          <KpiCard label="Produit fini total"
+            value={`${fmt(summary.total_pf_produit)} kg`}
+            sub="Toutes productions terminées" color="#10b981" icon="🧵" />
+          <KpiCard label="Rendement global"
+            value={fmtPct(summary.rendement_global)}
+            sub="PF / MP consommée" color="#8b5cf6" icon="📊" />
+          <KpiCard label="Total rebuts"
+            value={`${fmt(summary.total_rebuts)} kg`}
+            sub="Toutes productions" color="#ef4444" icon="⚠️" />
+        </div>
       )}
 
-      <CreateLotModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onLotCreated={handleLotCreated}
-      />
-    </div> 
+      {/* Onglets */}
+      <div style={{ display:"flex", gap:"0.5rem", marginBottom:"1.5rem" }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setActiveTab(t.id)} style={{
+            padding:"0.6rem 1.25rem", borderRadius:8, border:"none", cursor:"pointer",
+            fontSize:13, fontWeight:500, transition:"all 0.12s",
+            background: activeTab===t.id ? "#1e293b" : "#fff",
+            color:      activeTab===t.id ? "#fff"    : "#64748b",
+            boxShadow:  activeTab===t.id ? "none"    : "0 1px 3px rgba(0,0,0,0.07)",
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {/* Contenu */}
+      {loading ? (
+        <div style={{ textAlign:"center", padding:"4rem", color:"#94a3b8" }}>⏳ Chargement…</div>
+      ) : (
+        <>
+          {activeTab==="lot"         && <SuiviLot productions={productions} />}
+          {activeTab==="historique"  && <Historisation productions={productions} />}
+          {activeTab==="association" && (
+            <AssociationMachines
+              realtimeByRef={realtimeByRef}
+              mqttStatus={mqttStatus}
+            />
+          )}
+        </>
+      )}
+    </div>
   );
-}
+};
+
+// ── Styles ────────────────────────────────────────────────────────────────────
+const s = {
+  table         : { width:"100%", borderCollapse:"collapse", fontSize:13 },
+  thead         : { background:"#f8fafc" },
+  th            : { textAlign:"left", padding:"0.65rem 0.75rem", borderBottom:"2px solid #e2e8f0",
+                    color:"#64748b", fontWeight:600, fontSize:11, textTransform:"uppercase", letterSpacing:"0.06em" },
+  td            : { padding:"0.65rem 0.75rem", borderBottom:"1px solid #f1f5f9", color:"#1e293b", fontSize:13 },
+  codeBadge     : { background:"#e2e8f0", color:"#334155", padding:"2px 7px", borderRadius:5,
+                    fontSize:11, fontWeight:700, fontFamily:"monospace" },
+  inputSm       : { width:"100%", padding:"0.55rem 0.85rem", border:"1px solid #e2e8f0",
+                    borderRadius:8, fontSize:13, outline:"none", boxSizing:"border-box",
+                    background:"#f8fafc", color:"#0f172a" },
+  selectSm      : { padding:"0.55rem 0.85rem", border:"1px solid #e2e8f0",
+                    borderRadius:8, fontSize:13, background:"#f8fafc", color:"#0f172a", outline:"none" },
+  filterBtn     : { padding:"0.3rem 0.75rem", borderRadius:20, border:"1px solid #e2e8f0",
+                    background:"#f8fafc", color:"#64748b", fontSize:12, fontWeight:500, cursor:"pointer" },
+  filterBtnActive: { background:"#1e293b", color:"#fff", border:"1px solid #1e293b" },
+  btnRefresh    : { padding:"0.55rem 1rem", borderRadius:8, border:"1px solid #e2e8f0",
+                    background:"#fff", color:"#64748b", fontSize:13, cursor:"pointer", fontWeight:500 },
+};
+
+export default Traceability;

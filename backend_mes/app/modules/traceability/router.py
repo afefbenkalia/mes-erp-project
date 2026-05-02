@@ -1,56 +1,68 @@
-from fastapi import APIRouter, Depends, HTTPException
+"""
+router.py – Traçabilité MES
+"""
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from typing import Optional
+
 from app.database import get_db
-from fastapi.responses import FileResponse
+from . import service, schema
 
-from app.modules.traceability import service, schema, pdf_service
-
-router = APIRouter(prefix="/traceability", tags=["Traceability"])
+router = APIRouter(prefix="/traceability", tags=["Traçabilité MES"])
 
 
-# 🔹 GET ALL
-@router.get("/lots", response_model=list[schema.LotOut])
-def get_lots(db: Session = Depends(get_db)):
-    return service.get_all_lots(db)
+# ─── Résumé global ────────────────────────────────────────────────────────────
+
+@router.get("/summary", response_model=schema.TraceabilitySummaryResponse)
+def get_summary(db: Session = Depends(get_db)):
+    """KPIs globaux de traçabilité."""
+    return service.get_summary(db)
 
 
-# 🔹 GET ONE
-@router.get("/lots/{numero_lot}", response_model=schema.LotOut)
-def get_lot(numero_lot: str, db: Session = Depends(get_db)):
-    lot = service.get_lot(db, numero_lot)
-    if not lot:
-        raise HTTPException(status_code=404, detail="Lot non trouvé")
-    return lot
+# ─── Suivi par lot ────────────────────────────────────────────────────────────
+
+@router.get("/lots", response_model=list[schema.LotTraceResponse])
+def get_lots(
+    statut : Optional[str] = Query(None, description="Filtrer par statut : EN_ATTENTE, EN_COURS, TERMINE"),
+    produit: Optional[str] = Query(None, description="Filtrer par produit fini"),
+    db     : Session = Depends(get_db),
+):
+    """Liste toutes les productions avec leurs KPIs de traçabilité."""
+    return service.get_all_lots(db, statut=statut, produit=produit)
 
 
-# 🔹 CREATE LOT (AUTO STEPS)
-@router.post("/lots", response_model=schema.LotOut)
-def create_lot(lot_data: schema.LotCreate, db: Session = Depends(get_db)):
-    return service.create_lot(db, lot_data)
+@router.get("/lots/{production_id}", response_model=schema.LotTraceResponse)
+def get_lot(production_id: int, db: Session = Depends(get_db)):
+    """Fiche de traçabilité complète d'une production (lot)."""
+    result = service.get_lot_trace(db, production_id)
+    if not result:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Production introuvable")
+    return result
 
 
-# 🔹 FILTER
-@router.get("/lots/status/{status}", response_model=list[schema.LotOut])
-def get_status(status: str, db: Session = Depends(get_db)):
-    return service.get_by_status(db, status)
+# ─── Historisation ────────────────────────────────────────────────────────────
+
+@router.get("/historique", response_model=list[schema.HistoriqueItemResponse])
+def get_historique(
+    production_id: Optional[int] = Query(None),
+    machine      : Optional[str] = Query(None),
+    evenement    : Optional[str] = Query(None),
+    limit        : int = Query(200, ge=1, le=1000),
+    db           : Session = Depends(get_db),
+):
+    """Historique des événements de production."""
+    return service.get_historique(db, production_id=production_id,
+                                   machine=machine, evenement=evenement, limit=limit)
 
 
-# 🔹 ADD STEP
-@router.post("/lots/{lot_id}/steps", response_model=schema.StepOut)
-def add_step(lot_id: int, step: schema.StepCreate, db: Session = Depends(get_db)):
-    return service.add_step(db, lot_id, step)
+# ─── Association Machines ─────────────────────────────────────────────────────
 
-
-# 🔹 EXPORT PDF
-@router.get("/lots/{numero_lot}/pdf")
-def export_pdf(numero_lot: str, db: Session = Depends(get_db)):
-    lot = service.get_lot(db, numero_lot)
-
-    if not lot:
-        raise HTTPException(status_code=404, detail="Lot non trouvé")
-
-    kpi = service.calculate_kpi(lot)
-
-    file_path = pdf_service.generate_pdf(lot, kpi)
-
-    return FileResponse(path=file_path, filename=f"{numero_lot}.pdf")
+@router.get("/machines", response_model=list[schema.AssociationMachineResponse])
+def get_association_machines(db: Session = Depends(get_db)):
+    """
+    Association machine ↔ productions :
+    statistiques par machine (qtés, rendement, rebuts, dernière utilisation).
+    """
+    return service.get_association_machines(db)
