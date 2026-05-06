@@ -52,16 +52,37 @@ class EtapeResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────
+#  VÉRIFICATION ÉTAT MACHINE
+# ─────────────────────────────────────────────
+
+class MachineStatusCheckResponse(BaseModel):
+    """
+    Résultat du contrôle d'état de la machine pour l'étape courante.
+    Retourné par GET /{production_id}/machine-status
+    et inclus dans PipelineStateResponse.
+    """
+    production_id       : int
+    machine_code        : Optional[str]   = None
+    machine_name        : Optional[str]   = None
+    machine_state       : str             = "MARCHE"
+    is_blocking         : bool            = False
+    pipeline_can_proceed: bool            = True
+    message             : str             = ""
+
+
+# ─────────────────────────────────────────────
 #  PIPELINE STATE
 # ─────────────────────────────────────────────
 
 class PipelineStateResponse(BaseModel):
-    production_id    : int
-    etape_validee    : EtapeResponse
-    etape_suivante   : Optional[EtapeResponse]
-    pipeline_termine : bool
-    progression      : int
-    statut_production: StatutProduction
+    production_id       : int
+    etape_validee       : EtapeResponse
+    etape_suivante      : Optional[EtapeResponse]
+    pipeline_termine    : bool
+    progression         : int
+    statut_production   : StatutProduction
+    # ← NOUVEAU : état machine inclus dans chaque réponse avancer
+    machine_status      : Optional[MachineStatusCheckResponse] = None
 
 
 # ─────────────────────────────────────────────
@@ -71,7 +92,7 @@ class PipelineStateResponse(BaseModel):
 class ProductionCreate(BaseModel):
     of_id                 : int
     produit_fini          : str
-    quantite_produit_fini : float   # FIX: nom unifié partout
+    quantite_produit_fini : float
 
 
 class ProductionResponse(BaseModel):

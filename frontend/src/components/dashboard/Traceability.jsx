@@ -911,7 +911,7 @@ const Traceability = () => {
   const TABS = [
     { id:"lot",         label:"🔍 Suivi par lot"       },
     { id:"historique",  label:"📋 Historisation"        },
-    { id:"association", label:"🏭 Association Machines" },
+    { id:"association", label:"🏭 Machines" },
   ];
 
   return (
@@ -924,7 +924,7 @@ const Traceability = () => {
           🔗 Traçabilité
         </h1>
         <p style={{ margin:"4px 0 0", color:"#64748b", fontSize:14 }}>
-          Suivi complet des lots · Historisation · Association machines + MQTT
+          Suivi complet des lots · Historisation ·  machines + MQTT
         </p>
       </div>
 

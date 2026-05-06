@@ -3,7 +3,9 @@ router.py – Production MES · Pipeline automatique
 
 FIX CRITIQUE : /rebuts/ déclaré AVANT /{production_id}
 → FastAPI ne capturera plus "rebuts" comme un int (422 corrigé)
-→ Plus de 307 redirect
+
+NOUVEAU : GET /{production_id}/machine-status
+→ Polling frontend pour contrôle état machine en temps réel
 """
 
 from fastapi import APIRouter, Depends
@@ -76,3 +78,21 @@ async def avancer_pipeline(
 @router.get("/{production_id}/etapes", response_model=list[schema.EtapeResponse])
 def get_etapes(production_id: int, db: Session = Depends(get_db)):
     return service.get_etapes(db, production_id)
+
+
+# ─────────────────────────────────────────────
+#  CONTRÔLE ÉTAT MACHINE (NOUVEAU)
+# ─────────────────────────────────────────────
+
+@router.get(
+    "/{production_id}/machine-status",
+    response_model=schema.MachineStatusCheckResponse,
+    summary="Vérifie si la machine de l'étape courante est opérationnelle",
+    description=(
+        "Utilisé par le frontend en polling (toutes les 5s) quand le pipeline est bloqué. "
+        "Retourne pipeline_can_proceed=True dès que la machine revient en MARCHE. "
+        "Ne modifie aucune donnée."
+    ),
+)
+def get_machine_status(production_id: int, db: Session = Depends(get_db)):
+    return service.check_machine_status_for_production(db, production_id)
