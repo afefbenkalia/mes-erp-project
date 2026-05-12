@@ -16,23 +16,23 @@ const defaultData = [];
  */
 export default function PerformanceTrendChart({ data = defaultData }) {
   return (
-    <div className="h-72 w-full min-h-[280px]">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+    <div className="h-44 w-full min-h-[180px]">
+      <ResponsiveContainer width="100%" height={180}>
+        <LineChart data={data} margin={{ top: 2, right: 2, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
           <XAxis
             dataKey="label"
-            tick={{ fontSize: 11, fill: "#64748b" }}
+            tick={{ fontSize: 9, fill: "#64748b" }}
             tickLine={false}
             axisLine={{ stroke: "#e2e8f0" }}
             interval="preserveStartEnd"
           />
           <YAxis
             domain={[0, 100]}
-            tick={{ fontSize: 11, fill: "#64748b" }}
+            tick={{ fontSize: 9, fill: "#64748b" }}
             tickLine={false}
             axisLine={false}
-            width={36}
+            width={28}
             tickFormatter={(v) => `${v}`}
           />
           <Tooltip
@@ -47,10 +47,10 @@ export default function PerformanceTrendChart({ data = defaultData }) {
             type="monotone"
             dataKey="performance"
             stroke="#0d9488"
-            strokeWidth={2.5}
+            strokeWidth={1.75}
             dot={false}
-            activeDot={{ r: 5, strokeWidth: 0 }}
-            animationDuration={800}
+            activeDot={{ r: 3.5, strokeWidth: 0 }}
+            isAnimationActive={false}
           />
         </LineChart>
       </ResponsiveContainer>

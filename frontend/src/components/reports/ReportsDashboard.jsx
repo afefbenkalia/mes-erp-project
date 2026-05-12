@@ -719,6 +719,13 @@ const PerformanceContent = ({ report }) => {
 /* ─────────────────────────────────────────────────────────────────────────────
    REPORT CONTENT — TRAÇABILITÉ
 ───────────────────────────────────────────────────────────────────────────── */
+const TRACE_STATUT_FR = {
+  completed: { label: "Terminé",   bg: "#dcfce7", text: "#166534" },
+  running:   { label: "En cours",  bg: "#dbeafe", text: "#1e40af" },
+};
+const traceStatutFR  = (s) => TRACE_STATUT_FR[s] || { label: s || "—", bg: "#f1f5f9", text: "#64748b" };
+const traceStepColor = (s) => s === "completed" ? C.success : s === "running" ? "#1d4ed8" : C.textMuted;
+
 const TraceabilityContent = ({ report }) => {
   const s = report.summary || {};
   const [expanded, setExpanded] = useState({});
@@ -726,82 +733,118 @@ const TraceabilityContent = ({ report }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── KPIs ── */}
       <Panel>
         <div style={{ padding: "16px 20px 12px" }}>
-          <SectionTitle icon={Eye}>Résumé</SectionTitle>
+          <SectionTitle icon={Eye}>Résumé de la période</SectionTitle>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(165px,1fr))", gap: 12, padding: "0 20px 20px" }}>
-          <MetricCard label="Lots" value={s.total_lots ?? 0} unit="" sub={`Terminés : ${s.lots_completed ?? 0} · En cours : ${s.lots_in_progress ?? 0}`} accent="#0ea5e9" />
-          <MetricCard label="Étapes totales" value={s.total_steps ?? 0} unit="" accent="#8b5cf6" />
-          <MetricCard label="Machines utilisées" value={s.machines_used ?? 0} unit="" accent="#f59e0b" />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 12, padding: "0 20px 20px" }}>
+          <MetricCard label="Total lots"         value={s.total_lots      ?? 0} unit="" accent="#0ea5e9" />
+          <MetricCard label="Lots terminés"      value={s.lots_completed  ?? 0} unit="" accent={C.success} />
+          <MetricCard label="Lots en cours"      value={s.lots_in_progress ?? 0} unit="" accent="#f59e0b" />
+          <MetricCard label="Étapes totales"     value={s.total_steps     ?? 0} unit="" accent="#8b5cf6" />
+          <MetricCard label="Machines utilisées" value={s.machines_used   ?? 0} unit="" accent="#64748b" />
         </div>
       </Panel>
 
+      {/* ── Lots table ── */}
       <Panel>
         <div style={{ padding: "16px 20px 12px" }}>
-          <SectionTitle icon={FileText} aside={`${report.lots?.length ?? 0} lot(s)`}>Lots de traçabilité</SectionTitle>
+          <SectionTitle icon={FileText} aside={`${report.lots?.length ?? 0} lot(s)`}>
+            Lots de traçabilité
+          </SectionTitle>
         </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <THead>
               <Th></Th>
-              <Th>Numéro de lot</Th><Th>Produit</Th><Th>Ordre</Th>
-              <Th center>Date</Th><Th center>Statut</Th>
-              <Th right>Qté init.</Th><Th right>Qté finale</Th><Th right>Rendement</Th>
+              <Th>Numéro de lot</Th>
+              <Th>Produit</Th>
+              <Th>Ordre</Th>
+              <Th center>Date de création</Th>
+              <Th center>Statut</Th>
+              <Th right>Qté initiale</Th>
+              <Th right>Qté finale</Th>
+              <Th right>Rendement</Th>
             </THead>
             <tbody>
-              {!report.lots?.length
-                ? <tr><td colSpan={9}><Empty icon={Eye} title="Aucun lot dans cette période" /></td></tr>
-                : report.lots.map((lot) => {
-                  const isExp = expanded[lot.numero_lot];
-                  const statColors = lot.statut === "completed"
-                    ? { bg: "#dcfce7", text: "#166534" }
-                    : lot.statut === "running"
-                    ? { bg: "#dbeafe", text: "#1e40af" }
-                    : { bg: "#f1f5f9", text: "#64748b" };
-                  return (
-                    <React.Fragment key={lot.numero_lot}>
-                      <TRow>
-                        <td style={{ padding: "10px 8px", width: 32 }}>
-                          {lot.steps?.length > 0 && (
-                            <button onClick={() => toggle(lot.numero_lot)} style={{ background: "none", border: "none", cursor: "pointer", color: C.textMuted, display: "flex", alignItems: "center", padding: 2 }}>
-                              <ChevronRight size={14} style={{ transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
-                            </button>
-                          )}
-                        </td>
-                        <Td bold><CodeChip>{lot.numero_lot}</CodeChip></Td>
-                        <Td>{lot.produit}</Td>
-                        <Td muted>{lot.ordre_id || "—"}</Td>
-                        <Td center muted>{lot.date_creation?.slice(0, 10) || "—"}</Td>
-                        <td style={{ padding: "10px 14px", textAlign: "center" }}>
-                          <span style={{ background: statColors.bg, color: statColors.text, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700 }}>
-                            {lot.statut || "—"}
+              {!report.lots?.length ? (
+                <tr><td colSpan={9}><Empty icon={Eye} title="Aucun lot dans cette période" subtitle="Élargissez la plage de dates pour obtenir des résultats." /></td></tr>
+              ) : report.lots.map((lot) => {
+                const isExp  = expanded[lot.numero_lot];
+                const stat   = traceStatutFR(lot.statut);
+                const hasSteps = (lot.steps || []).length > 0;
+                return (
+                  <React.Fragment key={lot.numero_lot}>
+
+                    {/* ── lot row ── */}
+                    <TRow>
+                      <td style={{ padding: "10px 8px 10px 14px", width: 32 }}>
+                        {hasSteps && (
+                          <button
+                            onClick={() => toggle(lot.numero_lot)}
+                            title={isExp ? "Masquer les étapes" : "Voir les étapes"}
+                            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 5, background: isExp ? C.primaryLight : "#f1f5f9", border: `1px solid ${isExp ? C.primaryBorder : C.border}`, cursor: "pointer" }}
+                          >
+                            <ChevronRight size={12} color={isExp ? C.primary : C.textMuted} style={{ transform: isExp ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                          </button>
+                        )}
+                      </td>
+                      <Td bold><CodeChip>{lot.numero_lot}</CodeChip></Td>
+                      <Td>{lot.produit || "—"}</Td>
+                      <Td muted>{lot.ordre_id || "—"}</Td>
+                      <Td center muted>{fmtDatetimeFR(lot.date_creation) || "—"}</Td>
+                      <td style={{ padding: "10px 14px", textAlign: "center" }}>
+                        <span style={{ display: "inline-block", background: stat.bg, color: stat.text, borderRadius: 20, padding: "3px 11px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
+                          {stat.label}
+                        </span>
+                      </td>
+                      <Td right mono>{lot.quantite_initiale ?? "—"}</Td>
+                      <Td right mono>{lot.quantite_finale ?? "—"}</Td>
+                      <Td right>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontWeight: 700, color: scoreColor(lot.rendement_pct) }}>
+                          {fmt(lot.rendement_pct)} %
+                          <span style={{ width: 32, height: 4, borderRadius: 2, background: "#e2e8f0", overflow: "hidden", display: "inline-block" }}>
+                            <span style={{ display: "block", height: "100%", width: `${Math.min(100, lot.rendement_pct || 0)}%`, background: scoreColor(lot.rendement_pct), borderRadius: 2 }} />
                           </span>
-                        </td>
-                        <Td right mono>{lot.quantite_initiale}</Td>
-                        <Td right mono>{lot.quantite_finale}</Td>
-                        <Td right>
-                          <span style={{ fontWeight: 700, color: scoreColor(lot.rendement_pct) }}>{fmt(lot.rendement_pct)} %</span>
-                        </Td>
-                      </TRow>
-                      {isExp && (lot.steps || []).map((step, si) => (
+                        </span>
+                      </Td>
+                    </TRow>
+
+                    {/* ── steps rows ── */}
+                    {isExp && (lot.steps || []).map((step, si) => {
+                      const stepStat = traceStatutFR(step.statut);
+                      return (
                         <tr key={si} style={{ background: "#f8fafc", borderBottom: `1px solid ${C.borderLight}` }}>
-                          <td colSpan={2} />
-                          <Td muted>{step.operation}</Td>
-                          <td style={{ padding: "8px 14px" }}><CodeChip>{step.machine}</CodeChip></td>
-                          <Td center muted>{step.operateur}</Td>
-                          <td style={{ padding: "8px 14px", textAlign: "center" }}>
-                            <span style={{ fontSize: 10, fontWeight: 600, color: step.statut === "completed" ? C.success : C.textMuted }}>{step.statut}</span>
+                          {/* indent + connector */}
+                          <td style={{ padding: "0 0 0 22px", width: 32 }}>
+                            <div style={{ width: 12, height: "100%", borderLeft: `2px solid ${C.border}`, borderBottom: `2px solid ${C.border}`, borderBottomLeftRadius: 4, minHeight: 36 }} />
                           </td>
-                          <Td right mono muted>{step.duree_min} min</Td>
-                          <Td right mono muted>{step.quantite}</Td>
+                          {/* step number badge */}
+                          <td style={{ padding: "8px 8px 8px 6px", whiteSpace: "nowrap" }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, background: "#e2e8f0", borderRadius: 4, padding: "2px 6px" }}>
+                              #{si + 1}
+                            </span>
+                          </td>
+                          <Td>{step.operation || "—"}</Td>
+                          <td style={{ padding: "8px 14px" }}><CodeChip>{step.machine || "—"}</CodeChip></td>
+                          <Td center muted>{step.operateur || "—"}</Td>
+                          <td style={{ padding: "8px 14px", textAlign: "center" }}>
+                            <span style={{ display: "inline-block", background: stepStat.bg, color: stepStat.text, borderRadius: 20, padding: "2px 9px", fontSize: 10, fontWeight: 700 }}>
+                              {stepStat.label}
+                            </span>
+                          </td>
+                          <Td right mono muted>{step.duree_min != null ? `${step.duree_min} min` : "—"}</Td>
+                          <Td right mono muted>{step.quantite ?? "—"}</Td>
                           <td />
                         </tr>
-                      ))}
-                    </React.Fragment>
-                  );
-                })
-              }
+                      );
+                    })}
+
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

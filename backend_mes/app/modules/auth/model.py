@@ -19,3 +19,4 @@ class User(Base):
     last_login = Column(DateTime, nullable=True)
     login_count = Column(Integer, nullable=False, default=0)
     last_access = Column(DateTime, nullable=True)
+    erp_access = Column(Boolean, default=False, nullable=False)

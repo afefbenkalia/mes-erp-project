@@ -1,11 +1,20 @@
 """Pydantic schemas for maintenance dashboard."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from app.core.datetime_utc import to_utc_z_iso
+
+
+def _naive_utc(v: Optional[datetime]) -> Optional[datetime]:
+    """Strip timezone info by converting to UTC first (matches utc_now_naive storage)."""
+    if v is None:
+        return None
+    if v.tzinfo is not None:
+        return v.astimezone(timezone.utc).replace(tzinfo=None)
+    return v
 
 
 class MachineStatusResponse(BaseModel):
@@ -73,6 +82,11 @@ class PreventiveMaintenanceCreate(BaseModel):
     runtime_threshold_minutes: Optional[int] = Field(default=None, ge=1)
     status: str = Field(default="PLANIFIE", pattern="^(PLANIFIE|EN COURS|TERMINE)$")
 
+    @field_validator("planned_date", mode="after")
+    @classmethod
+    def _normalize_planned_date(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _naive_utc(v)
+
     @model_validator(mode="after")
     def _validate_trigger_fields(self):
         if self.trigger_mode == "SCHEDULED" and self.planned_date is None:
@@ -88,6 +102,11 @@ class PreventiveMaintenanceUpdate(BaseModel):
     trigger_mode: Optional[str] = Field(default=None, pattern="^(SCHEDULED|RUNTIME)$")
     runtime_threshold_minutes: Optional[int] = Field(default=None, ge=1)
     status: Optional[str] = Field(default=None, pattern="^(PLANIFIE|EN COURS|TERMINE)$")
+
+    @field_validator("planned_date", mode="after")
+    @classmethod
+    def _normalize_planned_date(cls, v: Optional[datetime]) -> Optional[datetime]:
+        return _naive_utc(v)
 
     @model_validator(mode="after")
     def _validate_trigger_fields(self):

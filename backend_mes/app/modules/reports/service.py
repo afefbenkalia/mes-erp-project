@@ -5,9 +5,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
-
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.modules.machines.model import Machine, MachineStateHistory
 from app.modules.maintenance.model import (
@@ -135,6 +133,62 @@ def _etape_duration_minutes(etape: Any) -> float:
     return 0.0
 
 
+# ── Full-fidelity serializers (PDF-style object graph) ────────────────────────
+
+def _serialize_etape(e: Any) -> dict:
+    """Convert an EtapeProduction ORM object to a fully-detailed dict."""
+    return {
+        "id":            e.id,
+        "ordre":         e.ordre,
+        "machine":       e.machine or "",
+        "nom_machine":   e.nom_machine or "",
+        "operateur":     e.operateur or "",
+        "qte_entree":    float(e.qte_entree or 0),
+        "qte_sortie":    float(e.qte_sortie or 0),
+        "debut":         str(e.debut or ""),
+        "fin":           str(e.fin or ""),
+        "statut":        str(e.statut.value if hasattr(e.statut, "value") else e.statut or ""),
+        "duree_minutes": round(_etape_duration_minutes(e), 1),
+        "date":          e.date.isoformat() if e.date else "",
+    }
+
+
+def _serialize_rebut(r: Any) -> dict:
+    """Convert a Rebut ORM object to a fully-detailed dict."""
+    return {
+        "id":       r.id,
+        "machine":  r.machine or "",
+        "defaut":   r.defaut or "",
+        "quantite": float(r.quantite or 0),
+        "date":     r.date.isoformat() if r.date else "",
+        "etape_id": r.etape_id,
+    }
+
+
+def _serialize_productions(productions: list) -> list[dict]:
+    """
+    Convert a list of Production ORM objects (with eagerly loaded etapes + rebuts)
+    into a complete, nested dict structure suitable for ERP transmission.
+    """
+    result = []
+    for p in productions:
+        statut = str(p.statut.value if hasattr(p.statut, "value") else p.statut or "")
+        etapes_sorted = sorted(p.etapes or [], key=lambda x: x.ordre)
+        result.append({
+            "id":                        p.id,
+            "of_id":                     p.of_id,
+            "of_numero":                 p.of_numero or "",
+            "produit_fini":              p.produit_fini or "",
+            "quantite_matiere_premiere": float(p.quantite_matiere_premiere or 0),
+            "quantite_produit_fini":     float(p.quantite_produit_fini or 0),
+            "statut":                    statut,
+            "date":                      p.date.isoformat() if p.date else "",
+            "etapes":                    [_serialize_etape(e) for e in etapes_sorted],
+            "rebuts":                    [_serialize_rebut(r) for r in (p.rebuts or [])],
+        })
+    return result
+
+
 # ── Daily report ──────────────────────────────────────────────────────────────
 
 def get_daily_report(db: Session, target_date: date) -> dict[str, Any]:
@@ -144,80 +198,72 @@ def get_daily_report(db: Session, target_date: date) -> dict[str, Any]:
 
     machines = db.query(Machine).order_by(Machine.name).all()
 
-    # ── Production totals ──
+    # Eager-load etapes + rebuts to prevent lazy loading and data loss
     productions = (
         db.query(prod_model.Production)
+        .options(
+            selectinload(prod_model.Production.etapes),
+            selectinload(prod_model.Production.rebuts),
+        )
         .filter(prod_model.Production.date == target_date)
         .all()
     )
+
+    all_etapes = [e for p in productions for e in (p.etapes or [])]
+    all_rebuts = [r for p in productions for r in (p.rebuts or [])]
+
     total_produced = sum(float(p.quantite_produit_fini or 0) for p in productions)
     total_raw_mat  = sum(float(p.quantite_matiere_premiere or 0) for p in productions)
-    orders_count   = len(productions)
-    orders_completed  = sum(1 for p in productions if p.statut == "TERMINE")
+    orders_count       = len(productions)
+    orders_completed   = sum(1 for p in productions if p.statut == "TERMINE")
     orders_in_progress = sum(1 for p in productions if p.statut == "EN_COURS")
 
-    # ── Rejects ──
-    rebuts = (
-        db.query(prod_model.Rebut)
-        .join(prod_model.Production, prod_model.Production.id == prod_model.Rebut.production_id)
-        .filter(prod_model.Production.date == target_date)
-        .all()
-    )
-    total_rejects = sum(float(r.quantite or 0) for r in rebuts)
+    # Rejects from eager-loaded data
+    total_rejects = sum(float(r.quantite or 0) for r in all_rebuts)
 
-    # Per-defect breakdown
     defaut_map: dict[str, float] = defaultdict(float)
-    for r in rebuts:
-        key = r.defaut or "Inconnu"
-        defaut_map[key] += float(r.quantite or 0)
+    for r in all_rebuts:
+        defaut_map[r.defaut or "Inconnu"] += float(r.quantite or 0)
     reject_breakdown = [
         {"defaut": k, "quantite": round(v, 2)}
         for k, v in sorted(defaut_map.items(), key=lambda x: -x[1])
     ]
 
-    # ── Per-machine production (EtapeProduction) ──
-    etape_rows = (
-        db.query(
-            prod_model.EtapeProduction.machine,
-            prod_model.EtapeProduction.nom_machine,
-            func.coalesce(func.sum(prod_model.EtapeProduction.qte_sortie), 0).label("produced"),
-        )
-        .join(prod_model.Production, prod_model.Production.id == prod_model.EtapeProduction.production_id)
-        .filter(prod_model.Production.date == target_date)
-        .group_by(prod_model.EtapeProduction.machine, prod_model.EtapeProduction.nom_machine)
-        .all()
-    )
-    # Per-machine rejects
+    # Per-machine production from eager-loaded etapes (no GROUP BY query needed)
+    machine_prod: dict[str, dict] = {}
+    for e in all_etapes:
+        key = e.machine or ""
+        if key not in machine_prod:
+            machine_prod[key] = {"nom_machine": e.nom_machine or "", "produced": 0.0}
+        machine_prod[key]["produced"] += float(e.qte_sortie or 0)
+
     rej_by_machine: dict[str, float] = defaultdict(float)
-    for r in rebuts:
+    for r in all_rebuts:
         if r.machine:
             rej_by_machine[r.machine] += float(r.quantite or 0)
 
     production_by_machine = [
         {
-            "machine_code": row.machine or "",
-            "machine_name": row.nom_machine or "",
-            "produced": round(float(row.produced), 2),
-            "rejects": round(rej_by_machine.get(row.machine, 0.0), 2),
+            "machine_code": code,
+            "machine_name": v["nom_machine"],
+            "produced":     round(v["produced"], 2),
+            "rejects":      round(rej_by_machine.get(code, 0.0), 2),
         }
-        for row in etape_rows
+        for code, v in machine_prod.items()
     ]
 
     # ── OEE ──
     rendement_pct = round(
         min(100.0, 100.0 * total_produced / total_raw_mat) if total_raw_mat > 0 else 100.0, 1
     )
-    good_q = max(0.0, total_produced - total_rejects)
-    quality = round(
-        min(100.0, 100.0 * good_q / total_produced) if total_produced > 0 else 100.0, 1
-    )
+    good_q   = max(0.0, total_produced - total_rejects)
+    quality  = round(min(100.0, 100.0 * good_q / total_produced) if total_produced > 0 else 100.0, 1)
     availability = _availability_for_window(db, window_start, window_end, machines)
 
-    # Performance: avg produced per machine vs. top machine
-    machine_produced = [row.produced for row in etape_rows if row.produced and row.produced > 0]
+    machine_produced = [v["produced"] for v in machine_prod.values() if v["produced"] > 0]
     if machine_produced:
-        avg_prod = sum(float(v) for v in machine_produced) / len(machine_produced)
-        max_prod = max(float(v) for v in machine_produced)
+        avg_prod = sum(machine_produced) / len(machine_produced)
+        max_prod = max(machine_produced)
         performance = round(min(100.0, 100.0 * avg_prod / max_prod) if max_prod > 0 else 82.0, 1)
     else:
         performance = 82.0
@@ -225,21 +271,20 @@ def get_daily_report(db: Session, target_date: date) -> dict[str, Any]:
     oee_val = _oee(availability, performance, quality)
 
     # ── Per-machine state & runtime ──
-    status_map = {
-        s.machine_id: s.state
-        for s in db.query(MachineOperationalStatus).all()
-    }
+    status_map = {s.machine_id: s.state for s in db.query(MachineOperationalStatus).all()}
     machines_out = []
     for m in machines:
         runtime_min, downtime_min = _machine_runtime_for_window(db, m, window_start, window_end)
         window_min = (window_end - window_start).total_seconds() / 60
-        avail_pct = round(100.0 * runtime_min / window_min, 1) if window_min > 0 else 0.0
+        avail_pct  = round(100.0 * runtime_min / window_min, 1) if window_min > 0 else 0.0
         machines_out.append({
-            "name": m.name,
-            "reference": m.reference,
-            "machine_type": m.machine_type,
-            "current_state": str(status_map.get(m.id, "INCONNU")),
-            "runtime_minutes": runtime_min,
+            "name":             m.name,
+            "reference":        m.reference,
+            "machine_type":     m.machine_type,
+            "location":         m.location,
+            "description":      m.description,
+            "current_state":    str(status_map.get(m.id, "INCONNU")),
+            "runtime_minutes":  runtime_min,
             "downtime_minutes": downtime_min,
             "availability_pct": avail_pct,
         })
@@ -247,23 +292,24 @@ def get_daily_report(db: Session, target_date: date) -> dict[str, Any]:
     return {
         "date": target_date.isoformat(),
         "production": {
-            "total_produced": round(total_produced, 2),
+            "total_produced":     round(total_produced, 2),
             "total_raw_material": round(total_raw_mat, 2),
-            "total_rejects": round(total_rejects, 2),
-            "rendement_pct": rendement_pct,
-            "orders_count": orders_count,
-            "orders_completed": orders_completed,
+            "total_rejects":      round(total_rejects, 2),
+            "rendement_pct":      rendement_pct,
+            "orders_count":       orders_count,
+            "orders_completed":   orders_completed,
             "orders_in_progress": orders_in_progress,
         },
         "oee": {
             "availability": availability,
-            "performance": performance,
-            "quality": quality,
-            "oee": oee_val,
+            "performance":  performance,
+            "quality":      quality,
+            "oee":          oee_val,
         },
         "production_by_machine": production_by_machine,
-        "reject_breakdown": reject_breakdown,
-        "machines": machines_out,
+        "reject_breakdown":      reject_breakdown,
+        "machines":              machines_out,
+        "productions_detail":    _serialize_productions(productions),
     }
 
 
@@ -275,15 +321,15 @@ def get_weekly_report(db: Session, year: int, week: int) -> dict[str, Any]:
         day_from = date.fromisocalendar(year, week, 1)  # Monday
         day_to   = date.fromisocalendar(year, week, 7)  # Sunday
     except ValueError:
-        # Invalid ISO week — return empty structure
         return {
-            "week": f"{year}-W{week:02d}",
-            "date_from": None,
-            "date_to": None,
-            "summary": {},
-            "daily_breakdown": [],
-            "machines_most_down": [],
+            "week":                f"{year}-W{week:02d}",
+            "date_from":           None,
+            "date_to":             None,
+            "summary":             {},
+            "daily_breakdown":     [],
+            "machines_most_down":  [],
             "production_by_machine": [],
+            "productions_detail":  [],
         }
 
     week_start = datetime.combine(day_from, time.min)
@@ -291,68 +337,58 @@ def get_weekly_report(db: Session, year: int, week: int) -> dict[str, Any]:
 
     machines = db.query(Machine).order_by(Machine.name).all()
 
-    # ── Productions for the week ──
+    # Eager-load etapes + rebuts for the week
     productions = (
         db.query(prod_model.Production)
+        .options(
+            selectinload(prod_model.Production.etapes),
+            selectinload(prod_model.Production.rebuts),
+        )
         .filter(
             prod_model.Production.date >= day_from,
             prod_model.Production.date <= day_to,
         )
         .all()
     )
+
+    all_etapes = [e for p in productions for e in (p.etapes or [])]
+    all_rebuts = [r for p in productions for r in (p.rebuts or [])]
+
     prod_by_date: dict[date, float] = defaultdict(float)
     for p in productions:
         prod_by_date[p.date] += float(p.quantite_produit_fini or 0)
     total_produced = sum(prod_by_date.values())
 
-    # ── Rejects for the week ──
-    rebuts = (
-        db.query(prod_model.Rebut)
-        .join(prod_model.Production, prod_model.Production.id == prod_model.Rebut.production_id)
-        .filter(
-            prod_model.Production.date >= day_from,
-            prod_model.Production.date <= day_to,
-        )
-        .all()
-    )
+    # O(1) lookup: production_id → date for rebut grouping
+    prod_date_map = {p.id: p.date for p in productions}
     rej_by_date: dict[date, float] = defaultdict(float)
-    for r in rebuts:
-        pdate = next(
-            (p.date for p in productions if p.id == r.production_id),
-            None,
-        )
-        if pdate:
-            rej_by_date[pdate] += float(r.quantite or 0)
+    for r in all_rebuts:
+        d = prod_date_map.get(r.production_id)
+        if d:
+            rej_by_date[d] += float(r.quantite or 0)
     total_rejects = sum(rej_by_date.values())
 
-    # ── Per-machine production for the week ──
-    etape_rows = (
-        db.query(
-            prod_model.EtapeProduction.machine,
-            prod_model.EtapeProduction.nom_machine,
-            func.coalesce(func.sum(prod_model.EtapeProduction.qte_sortie), 0).label("produced"),
-        )
-        .join(prod_model.Production, prod_model.Production.id == prod_model.EtapeProduction.production_id)
-        .filter(
-            prod_model.Production.date >= day_from,
-            prod_model.Production.date <= day_to,
-        )
-        .group_by(prod_model.EtapeProduction.machine, prod_model.EtapeProduction.nom_machine)
-        .all()
-    )
+    # Per-machine production from eager-loaded etapes
+    machine_prod_week: dict[str, dict] = {}
+    for e in all_etapes:
+        key = e.machine or ""
+        if key not in machine_prod_week:
+            machine_prod_week[key] = {"nom_machine": e.nom_machine or "", "produced": 0.0}
+        machine_prod_week[key]["produced"] += float(e.qte_sortie or 0)
+
     rej_by_machine_week: dict[str, float] = defaultdict(float)
-    for r in rebuts:
+    for r in all_rebuts:
         if r.machine:
             rej_by_machine_week[r.machine] += float(r.quantite or 0)
 
     production_by_machine = [
         {
-            "machine_code": row.machine or "",
-            "machine_name": row.nom_machine or "",
-            "produced": round(float(row.produced), 2),
-            "rejects": round(rej_by_machine_week.get(row.machine, 0.0), 2),
+            "machine_code": code,
+            "machine_name": v["nom_machine"],
+            "produced":     round(v["produced"], 2),
+            "rejects":      round(rej_by_machine_week.get(code, 0.0), 2),
         }
-        for row in etape_rows
+        for code, v in machine_prod_week.items()
     ]
 
     # ── Daily breakdown (Mon→Sun) ──
@@ -361,89 +397,88 @@ def get_weekly_report(db: Session, year: int, week: int) -> dict[str, Any]:
     daily_availabilities: list[float] = []
 
     for offset in range(7):
-        d = day_from + timedelta(days=offset)
+        d       = day_from + timedelta(days=offset)
         d_start = datetime.combine(d, time.min)
         d_end   = min(datetime.combine(d + timedelta(days=1), time.min), now)
 
         if d_end <= d_start:
             daily_breakdown.append({
-                "date": d.isoformat(),
-                "produced": 0.0,
-                "rejects": 0.0,
-                "availability": 0.0,
-                "oee": 0.0,
+                "date": d.isoformat(), "produced": 0.0,
+                "rejects": 0.0, "availability": 0.0, "oee": 0.0,
             })
             continue
 
-        d_prod = round(prod_by_date.get(d, 0.0), 2)
-        d_rej  = round(rej_by_date.get(d, 0.0), 2)
-
+        d_prod  = round(prod_by_date.get(d, 0.0), 2)
+        d_rej   = round(rej_by_date.get(d, 0.0), 2)
         d_avail = _availability_for_window(db, d_start, d_end, machines)
-        good = max(0.0, d_prod - d_rej)
+        good    = max(0.0, d_prod - d_rej)
         d_quality = round(min(100.0, 100.0 * good / d_prod) if d_prod > 0 else 100.0, 1)
-        d_oee = _oee(d_avail, 82.0, d_quality)  # performance fixed at 82 for daily slices
+        d_oee   = _oee(d_avail, 82.0, d_quality)
 
         daily_oees.append(d_oee)
         daily_availabilities.append(d_avail)
         daily_breakdown.append({
-            "date": d.isoformat(),
-            "produced": d_prod,
-            "rejects": d_rej,
-            "availability": d_avail,
-            "oee": d_oee,
+            "date": d.isoformat(), "produced": d_prod,
+            "rejects": d_rej, "availability": d_avail, "oee": d_oee,
         })
 
-    avg_oee = round(sum(daily_oees) / len(daily_oees), 1) if daily_oees else 0.0
+    avg_oee          = round(sum(daily_oees) / len(daily_oees), 1) if daily_oees else 0.0
     avg_availability = round(sum(daily_availabilities) / len(daily_availabilities), 1) if daily_availabilities else 0.0
 
     # ── Total runtime / downtime for the week ──
-    week_window_sec = (week_end - week_start).total_seconds()
+    week_window_sec  = (week_end - week_start).total_seconds()
     total_marche_sec = 0.0
     machines_down: list[dict] = []
 
     for m in machines:
-        _, downtime_min = _machine_runtime_for_window(db, m, week_start, week_end)
-        runtime_min, _ = _machine_runtime_for_window(db, m, week_start, week_end)
+        runtime_min, downtime_min = _machine_runtime_for_window(db, m, week_start, week_end)
         total_marche_sec += runtime_min * 60
-        week_min = week_window_sec / 60
-        down_pct = round(100.0 * downtime_min / week_min, 1) if week_min > 0 else 0.0
+        week_min  = week_window_sec / 60
+        down_pct  = round(100.0 * downtime_min / week_min, 1) if week_min > 0 else 0.0
         machines_down.append({
-            "name": m.name,
-            "reference": m.reference,
+            "name":             m.name,
+            "reference":        m.reference,
             "downtime_minutes": downtime_min,
-            "downtime_pct": down_pct,
+            "downtime_pct":     down_pct,
         })
 
     machines_down.sort(key=lambda x: -x["downtime_minutes"])
     machines_most_down = machines_down[:5]
 
     total_runtime_hours  = round(total_marche_sec / 3600, 1)
-    total_downtime_hours = round(max(0.0, week_window_sec * len(machines) - total_marche_sec) / 3600, 1)
+    total_downtime_hours = round(
+        max(0.0, week_window_sec * len(machines) - total_marche_sec) / 3600, 1
+    )
 
     return {
-        "week": f"{year}-W{week:02d}",
+        "week":     f"{year}-W{week:02d}",
         "date_from": day_from.isoformat(),
-        "date_to": day_to.isoformat(),
+        "date_to":   day_to.isoformat(),
         "summary": {
-            "total_produced": round(total_produced, 2),
-            "total_rejects": round(total_rejects, 2),
-            "avg_oee": avg_oee,
-            "avg_availability": avg_availability,
-            "total_runtime_hours": total_runtime_hours,
+            "total_produced":       round(total_produced, 2),
+            "total_rejects":        round(total_rejects, 2),
+            "avg_oee":              avg_oee,
+            "avg_availability":     avg_availability,
+            "total_runtime_hours":  total_runtime_hours,
             "total_downtime_hours": total_downtime_hours,
         },
-        "daily_breakdown": daily_breakdown,
-        "machines_most_down": machines_most_down,
+        "daily_breakdown":       daily_breakdown,
+        "machines_most_down":    machines_most_down,
         "production_by_machine": production_by_machine,
+        "productions_detail":    _serialize_productions(productions),
     }
 
 
 # ── Production par OF ─────────────────────────────────────────────────────────
 
 def get_production_of_report(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
-    # 3 bulk queries — no N+1
+    # Eager-load etapes + rebuts — avoids N+1 and prevents relationship data loss
     productions_with_of = (
         db.query(prod_model.Production, OF)
+        .options(
+            selectinload(prod_model.Production.etapes),
+            selectinload(prod_model.Production.rebuts),
+        )
         .join(OF, OF.id == prod_model.Production.of_id)
         .filter(
             prod_model.Production.date >= date_from,
@@ -452,65 +487,67 @@ def get_production_of_report(db: Session, date_from: date, date_to: date) -> dic
         .all()
     )
 
-    prod_ids = [p.id for p, _ in productions_with_of]
-
-    etapes_by_prod: dict[int, list] = defaultdict(list)
-    if prod_ids:
-        for e in (
-            db.query(prod_model.EtapeProduction)
-            .filter(prod_model.EtapeProduction.production_id.in_(prod_ids))
-            .order_by(prod_model.EtapeProduction.production_id, prod_model.EtapeProduction.ordre)
-            .all()
-        ):
-            etapes_by_prod[e.production_id].append(e)
-
-    rejects_by_prod: dict[int, float] = defaultdict(float)
-    if prod_ids:
-        for r in (
-            db.query(prod_model.Rebut)
-            .filter(prod_model.Rebut.production_id.in_(prod_ids))
-            .all()
-        ):
-            rejects_by_prod[r.production_id] += float(r.quantite or 0)
-
     of_rows = []
     total_produced = total_rejects = total_cible = 0.0
+
     for prod, of in productions_with_of:
-        rejets   = rejects_by_prod[prod.id]
+        etapes = sorted(prod.etapes or [], key=lambda e: e.ordre)
+        rebuts = prod.rebuts or []
+
+        rejets   = sum(float(r.quantite or 0) for r in rebuts)
         produced = float(prod.quantite_produit_fini or 0)
         cible    = float(of.quantite or 0)
         conforme = max(0.0, produced - rejets)
-        duration = sum(_etape_duration_minutes(e) for e in etapes_by_prod[prod.id])
+        duration = sum(_etape_duration_minutes(e) for e in etapes)
         taux     = round(100.0 * rejets / produced, 1) if produced > 0 else 0.0
-        statut   = prod.statut.value if hasattr(prod.statut, "value") else str(prod.statut)
+        statut   = str(prod.statut.value if hasattr(prod.statut, "value") else prod.statut)
+
+        defaut_map: dict[str, float] = defaultdict(float)
+        for r in rebuts:
+            defaut_map[r.defaut or "Inconnu"] += float(r.quantite or 0)
+
+        operators = list({e.operateur for e in etapes if e.operateur})
+
         total_produced += produced
         total_rejects  += rejets
         total_cible    += cible
+
         of_rows.append({
-            "of_numero":          prod.of_numero,
-            "produit":            prod.produit_fini,
-            "date":               prod.date.isoformat(),
-            "statut":             statut,
-            "quantite_cible":     round(cible, 0),
-            "quantite_produite":  round(produced, 2),
-            "quantite_conforme":  round(conforme, 2),
-            "rejets":             round(rejets, 2),
-            "taux_rejet_pct":     taux,
-            "duree_minutes":      round(duration, 1),
+            "of_id":             of.id,
+            "of_numero":         prod.of_numero,
+            "produit":           prod.produit_fini,
+            "date":              prod.date.isoformat(),
+            "statut":            statut,
+            "quantite_cible":    round(cible, 0),
+            "quantite_produite": round(produced, 2),
+            "quantite_conforme": round(conforme, 2),
+            "rejets":            round(rejets, 2),
+            "taux_rejet_pct":    taux,
+            "duree_minutes":     round(duration, 1),
+            "of_date_debut":     of.date_debut.isoformat() if of.date_debut else None,
+            "of_date_fin":       of.date_fin.isoformat() if of.date_fin else None,
+            "operateurs":        operators,
+            "etapes":            [_serialize_etape(e) for e in etapes],
+            "rebuts_breakdown": [
+                {"defaut": k, "quantite": round(v, 2)}
+                for k, v in sorted(defaut_map.items(), key=lambda x: -x[1])
+            ],
+            "rebuts_detail":     [_serialize_rebut(r) for r in rebuts],
         })
+
     of_rows.sort(key=lambda x: x["date"])
 
     return {
         "date_from": date_from.isoformat(),
         "date_to":   date_to.isoformat(),
         "summary": {
-            "total_of":               len(of_rows),
-            "of_termines":            sum(1 for r in of_rows if r["statut"] == "TERMINE"),
-            "of_en_cours":            sum(1 for r in of_rows if r["statut"] == "EN_COURS"),
-            "total_produit":          round(total_produced, 2),
-            "total_rejects":          round(total_rejects, 2),
-            "taux_rejet_global_pct":  round(100.0 * total_rejects / total_produced, 1) if total_produced > 0 else 0.0,
-            "total_cible":            round(total_cible, 0),
+            "total_of":              len(of_rows),
+            "of_termines":           sum(1 for r in of_rows if r["statut"] == "TERMINE"),
+            "of_en_cours":           sum(1 for r in of_rows if r["statut"] == "EN_COURS"),
+            "total_produit":         round(total_produced, 2),
+            "total_rejects":         round(total_rejects, 2),
+            "taux_rejet_global_pct": round(100.0 * total_rejects / total_produced, 1) if total_produced > 0 else 0.0,
+            "total_cible":           round(total_cible, 0),
         },
         "of_rows": of_rows,
     }
@@ -532,13 +569,16 @@ def get_maintenance_report(db: Session, date_from: date, date_to: date) -> dict[
         .all()
     )
 
-    open_count = (
-        db.query(MaintenanceIntervention)
+    # Open interventions with full details (not just a count)
+    open_intervention_rows = (
+        db.query(MaintenanceIntervention, Machine)
+        .join(Machine, Machine.id == MaintenanceIntervention.machine_id)
         .filter(
             MaintenanceIntervention.start_time >= window_start,
             MaintenanceIntervention.start_time < window_end,
         )
-        .count()
+        .order_by(MaintenanceIntervention.start_time.desc())
+        .all()
     )
 
     machine_impact: dict[int, dict] = {}
@@ -546,10 +586,12 @@ def get_maintenance_report(db: Session, date_from: date, date_to: date) -> dict[
         mid = machine.id
         if mid not in machine_impact:
             machine_impact[mid] = {
-                "machine_name":      machine.name,
-                "machine_reference": machine.reference,
+                "machine_name":       machine.name,
+                "machine_reference":  machine.reference,
+                "machine_type":       machine.machine_type,
+                "location":           machine.location,
                 "total_duration_sec": 0,
-                "interventions":     0,
+                "interventions":      0,
             }
         machine_impact[mid]["total_duration_sec"] += hist.duration_seconds or 0
         machine_impact[mid]["interventions"]      += 1
@@ -559,6 +601,8 @@ def get_maintenance_report(db: Session, date_from: date, date_to: date) -> dict[
             {
                 "machine_name":      v["machine_name"],
                 "machine_reference": v["machine_reference"],
+                "machine_type":      v["machine_type"],
+                "location":          v["location"],
                 "interventions":     v["interventions"],
                 "total_hours":       round(v["total_duration_sec"] / 3600, 1),
             }
@@ -569,30 +613,50 @@ def get_maintenance_report(db: Session, date_from: date, date_to: date) -> dict[
 
     history_out = [
         {
-            "date":               h.date.isoformat(),
-            "machine_name":       m.name,
-            "machine_reference":  m.reference,
-            "technician":         h.technician,
-            "duration_minutes":   round((h.duration_seconds or 0) / 60, 1),
-            "action_effectuee":   h.action_effectuee or "",
+            "date":              h.date.isoformat(),
+            "machine_name":      m.name,
+            "machine_reference": m.reference,
+            "machine_type":      m.machine_type,
+            "location":          m.location,
+            "technician":        h.technician,
+            "duration_minutes":  round((h.duration_seconds or 0) / 60, 1),
+            "action_effectuee":  h.action_effectuee or "",
         }
         for h, m in history_rows
     ]
 
+    open_interventions_out = [
+        {
+            "id":                i.id,
+            "machine_name":      m.name,
+            "machine_reference": m.reference,
+            "machine_type":      m.machine_type,
+            "location":          m.location,
+            "technician":        i.technician,
+            "status":            i.status,
+            "start_time":        i.start_time.isoformat() if i.start_time else None,
+            "end_time":          i.end_time.isoformat() if i.end_time else None,
+            "action_effectuee":  i.action_effectuee or "",
+        }
+        for i, m in open_intervention_rows
+    ]
+
     total_sec = sum(h.duration_seconds or 0 for h, _ in history_rows)
     n = len(history_rows)
+
     return {
         "date_from": date_from.isoformat(),
         "date_to":   date_to.isoformat(),
         "summary": {
-            "total_interventions":   n,
-            "total_hours":           round(total_sec / 3600, 1),
-            "machines_affected":     len(machine_impact),
-            "avg_duration_minutes":  round(total_sec / 60 / n, 1) if n else 0.0,
-            "open_interventions":    open_count,
+            "total_interventions":  n,
+            "total_hours":          round(total_sec / 3600, 1),
+            "machines_affected":    len(machine_impact),
+            "avg_duration_minutes": round(total_sec / 60 / n, 1) if n else 0.0,
+            "open_interventions":   len(open_intervention_rows),
         },
-        "machines_most_impacted": machines_most_impacted,
-        "history":                history_out,
+        "machines_most_impacted":    machines_most_impacted,
+        "history":                   history_out,
+        "open_interventions_detail": open_interventions_out,
     }
 
 
@@ -604,32 +668,29 @@ def get_performance_report(db: Session, date_from: date, date_to: date) -> dict[
 
     global_avail = _availability_for_window(db, window_start, window_end, machines)
 
+    # Eager-load etapes + rebuts to prevent data loss
     productions = (
         db.query(prod_model.Production)
+        .options(
+            selectinload(prod_model.Production.etapes),
+            selectinload(prod_model.Production.rebuts),
+        )
         .filter(
             prod_model.Production.date >= date_from,
             prod_model.Production.date <= date_to,
         )
         .all()
     )
+
+    all_rebuts    = [r for p in productions for r in (p.rebuts or [])]
     total_produced = sum(float(p.quantite_produit_fini or 0) for p in productions)
     total_raw      = sum(float(p.quantite_matiere_premiere or 0) for p in productions)
+    total_rejects  = sum(float(r.quantite or 0) for r in all_rebuts)
 
-    rebuts = (
-        db.query(prod_model.Rebut)
-        .join(prod_model.Production, prod_model.Production.id == prod_model.Rebut.production_id)
-        .filter(
-            prod_model.Production.date >= date_from,
-            prod_model.Production.date <= date_to,
-        )
-        .all()
-    )
-    total_rejects  = sum(float(r.quantite or 0) for r in rebuts)
-
-    good             = max(0.0, total_produced - total_rejects)
-    global_quality   = round(min(100.0, 100.0 * good / total_produced) if total_produced > 0 else 100.0, 1)
-    global_perf      = round(min(100.0, 100.0 * total_produced / total_raw) if total_raw > 0 else 82.0, 1)
-    global_oee_val   = _oee(global_avail, global_perf, global_quality)
+    good           = max(0.0, total_produced - total_rejects)
+    global_quality = round(min(100.0, 100.0 * good / total_produced) if total_produced > 0 else 100.0, 1)
+    global_perf    = round(min(100.0, 100.0 * total_produced / total_raw) if total_raw > 0 else 82.0, 1)
+    global_oee_val = _oee(global_avail, global_perf, global_quality)
 
     status_map = {s.machine_id: s.state for s in db.query(MachineOperationalStatus).all()}
     window_min = (window_end - window_start).total_seconds() / 60
@@ -643,6 +704,7 @@ def get_performance_report(db: Session, date_from: date, date_to: date) -> dict[
             "machine_name":      m.name,
             "machine_reference": m.reference,
             "machine_type":      m.machine_type,
+            "location":          m.location,
             "current_state":     str(status_map.get(m.id, "INCONNU")),
             "availability_pct":  m_avail,
             "runtime_minutes":   runtime_min,
@@ -660,7 +722,7 @@ def get_performance_report(db: Session, date_from: date, date_to: date) -> dict[
             prod_by_date[p.date] += float(p.quantite_produit_fini or 0)
         prod_date_map = {p.id: p.date for p in productions}
         rej_by_date: dict[date, float] = defaultdict(float)
-        for r in rebuts:
+        for r in all_rebuts:
             d = prod_date_map.get(r.production_id)
             if d:
                 rej_by_date[d] += float(r.quantite or 0)
@@ -676,7 +738,12 @@ def get_performance_report(db: Session, date_from: date, date_to: date) -> dict[
             d_good    = max(0.0, d_prod - d_rej)
             d_quality = round(min(100.0, 100.0 * d_good / d_prod) if d_prod > 0 else 100.0, 1)
             d_oee     = _oee(d_avail, 82.0, d_quality)
-            trend.append({"date": d.isoformat(), "availability": d_avail, "oee": d_oee, "produced": round(d_prod, 2)})
+            trend.append({
+                "date":         d.isoformat(),
+                "availability": d_avail,
+                "oee":          d_oee,
+                "produced":     round(d_prod, 2),
+            })
 
     return {
         "date_from": date_from.isoformat(),
@@ -690,77 +757,108 @@ def get_performance_report(db: Session, date_from: date, date_to: date) -> dict[
             "total_rejects":  round(total_rejects, 2),
             "machines_count": len(machines),
         },
-        "per_machine": per_machine,
-        "trend":       trend,
+        "per_machine":        per_machine,
+        "trend":              trend,
+        "productions_detail": _serialize_productions(productions),
     }
 
 
 # ── Traçabilité ───────────────────────────────────────────────────────────────
 
 def get_traceability_report(db: Session, date_from: date, date_to: date) -> dict[str, Any]:
-    num_days = (date_to - date_from).days + 1
+    _STATUT_MAP = {
+        prod_model.StatutProduction.TERMINE:    "completed",
+        prod_model.StatutProduction.EN_COURS:   "running",
+        prod_model.StatutProduction.EN_ATTENTE: "pending",
+    }
+    _STEP_STATUT_MAP = {
+        prod_model.StatutEtape.TERMINE:    "completed",
+        prod_model.StatutEtape.EN_COURS:   "running",
+        prod_model.StatutEtape.EN_ATTENTE: "pending",
+    }
 
-    if num_days <= 31:
-        date_prefixes = [
-            (date_from + timedelta(days=i)).isoformat()
-            for i in range(num_days)
-        ]
-        like_filters = [Lot.date_creation.like(f"{prefix}%") for prefix in date_prefixes]
-        lots = (
-            db.query(Lot)
-            .options(joinedload(Lot.steps))
-            .filter(or_(*like_filters))
-            .all()
+    # selectinload for both etapes and rebuts — avoids cartesian product from dual joinedload
+    productions = (
+        db.query(prod_model.Production)
+        .options(
+            selectinload(prod_model.Production.etapes),
+            selectinload(prod_model.Production.rebuts),
         )
-    else:
-        d_from_str = date_from.isoformat()
-        d_to_str   = date_to.isoformat()
-        all_lots   = db.query(Lot).options(joinedload(Lot.steps)).all()
-        lots = [
-            lot for lot in all_lots
-            if lot.date_creation and d_from_str <= lot.date_creation[:10] <= d_to_str
-        ]
+        .filter(
+            prod_model.Production.date >= date_from,
+            prod_model.Production.date <= date_to,
+        )
+        .all()
+    )
 
-    all_steps    = [s for lot in lots for s in (lot.steps or [])]
-    machines_set = {s.machine for s in all_steps if s.machine}
+    all_steps    = [e for p in productions for e in (p.etapes or [])]
+    machines_set = {e.machine for e in all_steps if e.machine}
+
+    def _duree_min(debut, fin) -> int:
+        if not debut or not fin:
+            return 0
+        try:
+            d = datetime.fromisoformat(str(debut))
+            f = datetime.fromisoformat(str(fin))
+            return max(0, int((f - d).total_seconds() / 60))
+        except Exception:
+            return 0
 
     lot_rows = []
-    for lot in lots:
-        init = lot.quantite_initiale or 0
-        fin  = lot.quantite_finale   or 0
-        rend = round(100.0 * fin / init, 1) if init > 0 else 0.0
+    for p in productions:
+        init       = p.quantite_matiere_premiere or 0
+        fin        = p.quantite_produit_fini     or 0
+        rend       = round(100.0 * fin / init, 1) if init > 0 else 0.0
+        lot_rebuts = p.rebuts or []
+
         lot_rows.append({
-            "numero_lot":        lot.numero_lot,
-            "produit":           lot.produit,
-            "ordre_id":          lot.ordre_id or "",
-            "date_creation":     lot.date_creation or "",
-            "statut":            lot.status or "",
+            "numero_lot":        p.of_numero,
+            "produit":           p.produit_fini,
+            "ordre_id":          str(p.of_id) if p.of_id else "",
+            "date_creation":     p.date.isoformat() if p.date else "",
+            "statut":            _STATUT_MAP.get(p.statut, str(p.statut or "")),
             "quantite_initiale": init,
             "quantite_finale":   fin,
             "rendement_pct":     rend,
             "steps": [
                 {
-                    "operation": s.operation,
-                    "machine":   s.machine   or "—",
-                    "operateur": s.operateur or "—",
-                    "statut":    s.status    or "",
-                    "duree_min": s.duree_min or 0,
-                    "quantite":  s.quantite  or 0,
+                    "operation":  e.nom_machine or e.machine or f"Étape {e.ordre}",
+                    "machine":    e.machine   or "—",
+                    "operateur":  e.operateur or "—",
+                    "statut":     _STEP_STATUT_MAP.get(e.statut, str(e.statut or "")),
+                    "ordre":      e.ordre,
+                    "qte_entree": float(e.qte_entree or 0),
+                    "quantite":   float(e.qte_sortie or 0),
+                    "duree_min":  _duree_min(e.debut, e.fin),
+                    "debut":      str(e.debut or ""),
+                    "fin":        str(e.fin or ""),
                 }
-                for s in sorted(lot.steps or [], key=lambda x: x.id)
+                for e in sorted(p.etapes or [], key=lambda x: x.ordre)
             ],
+            "rebuts": [
+                {
+                    "machine":  r.machine or "",
+                    "defaut":   r.defaut or "",
+                    "quantite": float(r.quantite or 0),
+                    "date":     r.date.isoformat() if r.date else "",
+                    "etape_id": r.etape_id,
+                }
+                for r in lot_rebuts
+            ],
+            "total_rebuts": round(sum(float(r.quantite or 0) for r in lot_rebuts), 2),
         })
+
     lot_rows.sort(key=lambda x: x["date_creation"], reverse=True)
 
     return {
         "date_from": date_from.isoformat(),
         "date_to":   date_to.isoformat(),
         "summary": {
-            "total_lots":        len(lots),
-            "total_steps":       len(all_steps),
-            "machines_used":     len(machines_set),
-            "lots_completed":    sum(1 for lot in lots if lot.status == "completed"),
-            "lots_in_progress":  sum(1 for lot in lots if lot.status == "running"),
+            "total_lots":       len(productions),
+            "total_steps":      len(all_steps),
+            "machines_used":    len(machines_set),
+            "lots_completed":   sum(1 for p in productions if p.statut == prod_model.StatutProduction.TERMINE),
+            "lots_in_progress": sum(1 for p in productions if p.statut == prod_model.StatutProduction.EN_COURS),
         },
         "lots": lot_rows,
     }

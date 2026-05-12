@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from . import service, schema
-from app.core.security import create_token, get_current_user
+from app.core.security import create_token, get_current_user, get_apps_for_user
 
 
 logger = logging.getLogger("auth_router")
@@ -13,11 +13,17 @@ logger = logging.getLogger("auth_router")
 router = APIRouter(tags=["Authentication"])
 
 
+def _require_admin(current_user: dict = Depends(get_current_user)) -> dict:
+    if current_user.get("role") != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Réservé aux administrateurs")
+    return current_user
+
+
 @router.post("/create-user", response_model=schema.UserResponse, status_code=status.HTTP_201_CREATED)
 def create_user_by_admin(
     user_data: schema.UserCreateByAdmin,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """
     Admin creates a new user with temporary password.
@@ -54,7 +60,9 @@ def login(data: schema.UserLogin, db: Session = Depends(get_db)):
     token = create_token({
         "sub": user.email,
         "role": user.role,
-        "user_id": user.id
+        "user_id": user.id,
+        "erp_access": user.erp_access,
+        "apps": get_apps_for_user(user.erp_access),
     })
     
     return {
@@ -103,7 +111,7 @@ def get_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Get all users (admin only)."""
     # TODO: Verify current_user is admin
@@ -113,7 +121,7 @@ def get_users(
 @router.get("/users/stats", response_model=schema.UserStatsResponse)
 def get_users_stats(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Get advanced user statistics for dashboard cards."""
     # TODO: Verify current_user is admin
@@ -124,7 +132,7 @@ def get_users_stats(
 def get_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Get user by ID (admin only)."""
     # TODO: Verify current_user is admin
@@ -142,7 +150,7 @@ def update_user(
     user_id: int,
     user_data: schema.UserUpdateByAdmin,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Update user by ID (admin only)."""
     try:
@@ -164,7 +172,7 @@ def update_user(
 def reset_user_password(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Reset user password and send a new temporary password by email (admin only)."""
     try:
@@ -191,7 +199,7 @@ def reset_user_password(
 def delete_user(
     user_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(lambda: {"role": "admin"})  # TODO: Add actual dependency
+    current_user: dict = Depends(_require_admin)
 ):
     """Delete user (admin only)."""
     # TODO: Verify current_user is admin

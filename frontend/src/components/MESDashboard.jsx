@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import logo from "../assets/logo_sitex.jpg";
 import {
   AlertTriangle,
   Bell,
@@ -9,7 +10,6 @@ import {
   Clock3,
   Factory,
   FileText,
-  Gauge,
   GitMerge,
   HardDrive,
   History,
@@ -32,6 +32,7 @@ import ProductionDashboard    from "./dashboard/DashboardMes/ProductionDashboard
 import MaintenanceDashboard   from "./maintenance/MaintenanceDashboard";
 import Operateur              from "./operateur/Operateur";
 import ReportsDashboard       from "./reports/ReportsDashboard";
+import { subscribeMaintenanceEvents } from "../services/maintenanceSocket";
 
 /* ─────────────────────────────────────────
    ROLE / MODULE CONFIGURATION
@@ -84,12 +85,35 @@ const ROLE_COLORS = {
   operator:                { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0" },
 };
 
-/* static demo notifications — replace with API in production */
-const DEMO_NOTIFS = [
-  { id: 1, title: "Machine M-003 — Erreur critique", time: "Il y a 4 min",  dot: "#ef4444" },
-  { id: 2, title: "Maintenance préventive planifiée", time: "Il y a 22 min", dot: "#f59e0b" },
-  { id: 3, title: "Intervention M-007 clôturée",     time: "Il y a 1 h",    dot: "#22c55e" },
-];
+/* ── relative time formatter ── */
+const formatRelativeTime = (isoString) => {
+  if (!isoString) return "";
+  const date = new Date(isoString);
+  if (Number.isNaN(date.getTime())) return "";
+  const deltaSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+  if (deltaSec < 10)  return "À l'instant";
+  if (deltaSec < 60)  return `Il y a ${deltaSec}s`;
+  const min = Math.floor(deltaSec / 60);
+  if (min < 60) return `Il y a ${min} min`;
+  const hours = Math.floor(min / 60);
+  if (hours < 24) return `Il y a ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `Il y a ${days}j`;
+};
+
+/* dot color by notification event type / state */
+const EVENT_DOT_COLORS = {
+  ERREUR:      "#ef4444",
+  MAINTENANCE: "#f59e0b",
+  MARCHE:      "#22c55e",
+  PAUSE:       "#94a3b8",
+};
+const getNotifDot = (payload) => {
+  if (payload?.state) return EVENT_DOT_COLORS[payload.state] || "#3b82f6";
+  return "#3b82f6";
+};
+
+const MAX_NOTIFS = 30;
 
 const SIDEBAR_W_OPEN  = 244;
 const SIDEBAR_W_CLOSE = 62;
@@ -105,7 +129,9 @@ export default function MESDashboard() {
   const [currentTime,   setCurrentTime]  = useState(new Date());
   const [searchQuery,   setSearchQuery]  = useState("");
   const [notifOpen,     setNotifOpen]    = useState(false);
-  const [notifs,        setNotifs]       = useState(DEMO_NOTIFS);
+  const [notifs,        setNotifs]       = useState([]);
+  const [notifTick,     setNotifTick]    = useState(0);
+  const notifIdRef = useRef(0);
 
   const notifRef = useRef(null);
 
@@ -113,6 +139,48 @@ export default function MESDashboard() {
     const id = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  /* ── refresh relative times every 30s ── */
+  useEffect(() => {
+    const id = setInterval(() => setNotifTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /* ── WebSocket → live notifications ── */
+  const pushNotif = useCallback((title, payload) => {
+    notifIdRef.current += 1;
+    const entry = {
+      id: notifIdRef.current,
+      title,
+      timestamp: payload?.timestamp || new Date().toISOString(),
+      dot: getNotifDot(payload),
+    };
+    setNotifs((prev) => [entry, ...prev].slice(0, MAX_NOTIFS));
+  }, []);
+
+  useEffect(() => {
+    const unsubscribe = subscribeMaintenanceEvents({
+      onStatusChange: () => {},
+      onMessage: (message) => {
+        if (!message || !message.event) return;
+        const p = message.payload || {};
+        if (message.event === "notification") {
+          pushNotif(p.message || "Notification maintenance", p);
+        } else if (message.event === "intervention_completed") {
+          pushNotif(
+            `Intervention clôturée — ${p.machine_reference || "Machine"}`,
+            { ...p, state: "MARCHE" },
+          );
+        } else if (message.event === "machine_repaired") {
+          pushNotif(
+            p.message || `Machine ${p.machine_reference || ""} réparée`,
+            { ...p, state: "PAUSE" },
+          );
+        }
+      },
+    });
+    return unsubscribe;
+  }, [pushNotif]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -138,7 +206,6 @@ export default function MESDashboard() {
   const roleConfig = ROLE_CONFIG[configKey];
   const roleLabel  = ROLE_LABELS[role]  || role;
   const roleColor  = ROLE_COLORS[role]  || ROLE_COLORS.manager;
-  const initials   = (user.username || "?").slice(0, 2).toUpperCase();
 
   const handleLogout   = () => { localStorage.clear(); window.location.href = "/login"; };
   const clearAllNotifs = () => { setNotifs([]); setNotifOpen(false); };
@@ -186,76 +253,70 @@ export default function MESDashboard() {
       ══════════════════════════════════════ */}
       <aside style={{
         width: W, minWidth: W,
-        background: "#0f172a",
+        background: "linear-gradient(180deg, #1a2c4e 0%, #243b61 60%, #2e4a78 100%)",
         display: "flex", flexDirection: "column",
-        transition: "width 0.22s cubic-bezier(.4,0,.2,1), min-width 0.22s cubic-bezier(.4,0,.2,1)",
+        transition: "width 0.28s cubic-bezier(.4,0,.2,1), min-width 0.28s cubic-bezier(.4,0,.2,1)",
         overflow: "hidden",
-        boxShadow: "2px 0 20px rgba(0,0,0,0.28)",
+        boxShadow: "4px 0 24px rgba(0,0,0,0.22)",
         zIndex: 20, flexShrink: 0,
+        fontFamily: "'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif",
       }}>
 
-        {/* Brand / toggle */}
+        {/* ── Brand header ── */}
         <div style={{
-          height: NAVBAR_H, flexShrink: 0,
-          display: "flex", alignItems: "center",
-          justifyContent: sidebarOpen ? "space-between" : "center",
-          padding: sidebarOpen ? "0 12px 0 16px" : "0",
-          borderBottom: "1px solid rgba(255,255,255,0.06)",
+          display: "flex", alignItems: "center", gap: 12,
+          padding: sidebarOpen ? "20px 16px 18px" : "20px 0 18px",
+          justifyContent: sidebarOpen ? "flex-start" : "center",
+          borderBottom: "1px solid rgba(255,255,255,0.08)",
+          flexShrink: 0,
         }}>
+          <div style={{
+            width: 48, height: 48, borderRadius: 10, flexShrink: 0,
+            background: "#ffffff",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            overflow: "hidden",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+          }}>
+            <img src={logo} alt="Logo" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+          </div>
           {sidebarOpen && (
-            <div style={{ display: "flex", alignItems: "center", gap: 11, overflow: "hidden", minWidth: 0 }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                background: "linear-gradient(135deg,#3b82f6,#06b6d4)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                boxShadow: "0 0 0 3px rgba(59,130,246,0.22)",
-              }}>
-                <Gauge size={19} color="white" />
-              </div>
-              <div style={{ overflow: "hidden", whiteSpace: "nowrap" }}>
-                <p style={{ color: "#f8fafc", fontWeight: 800, fontSize: 15, margin: 0, letterSpacing: "-0.03em" }}>MES Platform</p>
-                <p style={{ color: "#475569",  fontWeight: 500, fontSize: 11, margin: 0, letterSpacing: "0.02em" }}>Industrial Suite v2</p>
-              </div>
+            <div style={{ overflow: "hidden" }}>
+              <div style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", letterSpacing: "-0.3px", lineHeight: 1.2 }}>SITEX</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", letterSpacing: "0.8px", textTransform: "uppercase", marginTop: 2 }}>Sousse · MES</div>
             </div>
           )}
-
-          <button
-            onClick={() => setSidebarOpen(o => !o)}
-            title={sidebarOpen ? "Réduire le menu" : "Étendre le menu"}
-            style={{
-              width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-              background: "rgba(255,255,255,0.05)",
-              border: "1px solid rgba(255,255,255,0.07)",
-              cursor: "pointer", color: "#64748b",
-              display: "flex", alignItems: "center", justifyContent: "center",
-              transition: "background 0.15s, color 0.15s",
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,255,255,0.1)";  e.currentTarget.style.color = "#94a3b8"; }}
-            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.05)"; e.currentTarget.style.color = "#64748b"; }}
-          >
-            {sidebarOpen ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
-          </button>
         </div>
 
-        {/* Section label */}
+        {/* ── Role badge ── */}
         {sidebarOpen && (
-          <p style={{
-            margin: 0, padding: "18px 18px 7px",
-            color: "#334155", fontSize: 10.5, fontWeight: 700,
-            textTransform: "uppercase", letterSpacing: "0.18em",
-            whiteSpace: "nowrap",
+          <div style={{
+            margin: "12px 14px",
+            padding: "8px 14px",
+            background: "rgba(74,127,193,0.15)",
+            border: "1px solid rgba(74,127,193,0.28)",
+            borderRadius: 10,
+            fontSize: 11, fontWeight: 600,
+            color: "rgba(255,255,255,0.8)",
+            letterSpacing: "0.3px",
+            display: "flex", alignItems: "center", gap: 8,
+            flexShrink: 0,
           }}>
-            Menu principal
-          </p>
+            <span style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: "#4ade80", flexShrink: 0,
+              boxShadow: "0 0 6px #4ade80",
+            }} />
+            {roleLabel}
+          </div>
         )}
 
-        {/* Nav items */}
+        {/* ── Nav items ── */}
         <nav style={{
           flex: 1,
-          padding: sidebarOpen ? "4px 10px" : "14px 10px",
+          padding: sidebarOpen ? "8px 10px" : "14px 10px",
           overflowY: "auto", overflowX: "hidden",
           display: "flex", flexDirection: "column", gap: 3,
-          scrollbarWidth: "thin", scrollbarColor: "#1e293b transparent",
+          scrollbarWidth: "thin", scrollbarColor: "#243b61 transparent",
         }}>
           {menu.map((item) => {
             const active = activeModule === item.id;
@@ -266,74 +327,118 @@ export default function MESDashboard() {
                 onClick={() => setActiveModule(item.id)}
                 style={{
                   display: "flex", alignItems: "center",
-                  gap: 11,
+                  gap: 12,
                   justifyContent: sidebarOpen ? "flex-start" : "center",
-                  padding: sidebarOpen ? "10px 12px" : "11px 0",
-                  borderRadius: 9,
+                  padding: sidebarOpen ? "10px 12px" : "10px 0",
+                  borderRadius: 12,
                   cursor: "pointer", width: "100%", textAlign: "left",
-                  background: active ? "rgba(59,130,246,0.14)" : "transparent",
+                  background: active ? "rgba(74,127,193,0.18)" : "transparent",
                   border: "none",
-                  borderLeft: active ? "3px solid #3b82f6" : "3px solid transparent",
-                  color: active ? "#bfdbfe" : "#64748b",
-                  fontSize: 14, fontWeight: active ? 600 : 400,
-                  letterSpacing: "-0.01em",
+                  transition: "background 0.18s",
                   whiteSpace: "nowrap", overflow: "hidden",
-                  transition: "background 0.14s, color 0.14s",
+                  position: "relative",
                 }}
-                onMouseEnter={e => {
-                  if (!active) {
-                    e.currentTarget.style.background = "rgba(255,255,255,0.05)";
-                    e.currentTarget.style.color = "#94a3b8";
-                  }
-                }}
-                onMouseLeave={e => {
-                  if (!active) {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "#64748b";
-                  }
-                }}
+                onMouseEnter={e => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.07)"; }}
+                onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
               >
+                {/* Icon wrap */}
                 <span style={{
-                  flexShrink: 0, display: "flex", alignItems: "center",
-                  color: active ? "#60a5fa" : "#475569",
-                  transition: "color 0.14s",
+                  width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  background: active ? "#4a7fc1" : "transparent",
+                  color: active ? "#ffffff" : "rgba(255,255,255,0.5)",
+                  boxShadow: active ? "0 4px 12px rgba(74,127,193,0.4)" : "none",
+                  transition: "all 0.18s",
                 }}>
                   {item.icon}
                 </span>
                 {sidebarOpen && (
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{item.label}</span>
+                  <span style={{
+                    fontSize: 13.5, fontWeight: active ? 600 : 500,
+                    color: active ? "#ffffff" : "rgba(255,255,255,0.65)",
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    flex: 1,
+                    transition: "color 0.18s",
+                  }}>
+                    {item.label}
+                  </span>
+                )}
+                {active && sidebarOpen && (
+                  <span style={{
+                    width: 5, height: 5, borderRadius: "50%",
+                    background: "#4a7fc1", flexShrink: 0, marginRight: 2,
+                  }} />
                 )}
               </button>
             );
           })}
         </nav>
 
-        {/* Logout */}
-        <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", padding: "10px 10px 14px", flexShrink: 0 }}>
+        {/* ── Footer / Logout ── */}
+        <div style={{
+          borderTop: "1px solid rgba(255,255,255,0.08)",
+          padding: "10px 10px 14px", flexShrink: 0,
+        }}>
           <button
             title={!sidebarOpen ? "Déconnexion" : undefined}
             onClick={handleLogout}
             style={{
-              display: "flex", alignItems: "center",
-              gap: 11,
+              display: "flex", alignItems: "center", gap: 12,
               justifyContent: sidebarOpen ? "flex-start" : "center",
-              padding: sidebarOpen ? "10px 12px" : "11px 0",
-              borderRadius: 9, border: "none",
+              padding: sidebarOpen ? "10px 12px" : "10px 0",
+              borderRadius: 12, border: "none",
               cursor: "pointer", width: "100%",
               background: "transparent",
               color: "#f87171",
-              fontSize: 14, fontWeight: 500,
+              fontSize: 13.5, fontWeight: 500,
               whiteSpace: "nowrap",
               transition: "background 0.15s, color 0.15s",
             }}
             onMouseEnter={e => { e.currentTarget.style.background = "rgba(239,68,68,0.12)"; e.currentTarget.style.color = "#fca5a5"; }}
             onMouseLeave={e => { e.currentTarget.style.background = "transparent";           e.currentTarget.style.color = "#f87171"; }}
           >
-            <LogOut size={18} style={{ flexShrink: 0 }} />
+            <span style={{
+              width: 34, height: 34, borderRadius: 9, flexShrink: 0,
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "inherit",
+            }}>
+              <LogOut size={18} />
+            </span>
             {sidebarOpen && <span>Déconnexion</span>}
           </button>
+
+          {sidebarOpen && (
+            <div style={{ textAlign: "center", marginTop: 10 }}>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontWeight: 500 }}>MES Platform · v2.0</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", marginTop: 2 }}>© 2026 SITEX Sousse</div>
+            </div>
+          )}
         </div>
+
       </aside>
+
+      {/* ── Collapse toggle (outside aside to avoid overflow:hidden clipping) ── */}
+      <button
+        onClick={() => setSidebarOpen(o => !o)}
+        title={sidebarOpen ? "Réduire" : "Développer"}
+        style={{
+          position: "fixed",
+          top: 76,
+          left: W - 14,
+          width: 28, height: 28, borderRadius: "50%",
+          background: "#2e4a78",
+          border: "2px solid rgba(255,255,255,0.25)",
+          color: "#ffffff",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          cursor: "pointer",
+          boxShadow: "0 2px 10px rgba(0,0,0,0.3)",
+          transition: "left 0.28s cubic-bezier(.4,0,.2,1), background 0.2s",
+          zIndex: 200,
+          padding: 0,
+        }}
+      >
+        {sidebarOpen ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
+      </button>
 
       {/* ══════════════════════════════════════
           MAIN AREA
@@ -424,8 +529,9 @@ export default function MESDashboard() {
               </span>
             </div>
 
-            {/* Notification bell */}
-            <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
+            {/* Notification bell (hidden for admin role) */}
+            {role !== "admin" && (
+              <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
               <button
                 onClick={() => setNotifOpen(o => !o)}
                 title="Notifications"
@@ -538,7 +644,7 @@ export default function MESDashboard() {
                             {n.title}
                           </p>
                           <p style={{ margin: "3px 0 0", fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
-                            {n.time}
+                            {formatRelativeTime(n.timestamp)}
                           </p>
                         </div>
                       </div>
@@ -564,22 +670,13 @@ export default function MESDashboard() {
                   )}
                 </div>
               )}
-            </div>
+              </div>
+            )}
 
             <VDivider />
 
             {/* User */}
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 0 0 6px" }}>
-              <div style={{
-                width: 36, height: 36, borderRadius: "50%", flexShrink: 0,
-                background: "linear-gradient(135deg,#6366f1,#8b5cf6)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 13, fontWeight: 800, color: "white",
-                boxShadow: "0 0 0 2.5px rgba(99,102,241,0.2)",
-                letterSpacing: "-0.02em",
-              }}>
-                {initials}
-              </div>
               <div style={{ lineHeight: 1.2 }}>
                 <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
                   {user.username}

@@ -2,14 +2,17 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.datetime_utc import utc_now_naive
 from app.core.security import get_current_user
 from app.database import get_db
 from app.modules.auth.model import User
+from app.modules.dashboard.service import compute_machine_state_seconds
 from app.modules.maintenance.realtime import maintenance_ws_manager
 from app.utils.email_service import send_maintenance_notification_email
 
@@ -118,6 +121,45 @@ def list_machines(
             d["current_state_started_at"] = None
         result.append(MachineResponse(**d))
     return result
+
+
+@router.get("/runtime-stats")
+def get_runtime_stats(db: Session = Depends(get_db)):
+    """
+    Runtime / downtime par machine pour MachineTable — fenêtre alignée
+    sur minuit heure système locale. Reset automatique à 00:00 chaque jour.
+
+    Logique :
+      - since = minuit local (heure système réelle, convertie en UTC naïf
+        car la DB stocke des timestamps UTC naïfs via utc_now_naive())
+      - Pour chaque entrée d'historique chevauchant [since, now] :
+        - durée d'overlap clippée à la fenêtre
+        - MARCHE → runtime, PAUSE/ERREUR/MAINTENANCE → downtime
+      - Filtre commun appliqué via compute_machine_state_seconds :
+        l'entrée système initiale (changed_by='system', ended_at=NULL)
+        est exclue.
+
+    Le dashboard (/api/dashboard/summary) garde sa fenêtre 24h glissante
+    pour éviter le drop visuel à minuit. Les deux endpoints partagent le
+    même helper compute_machine_state_seconds, garantissant cohérence.
+    """
+    # Pivot 00:00 heure système locale, exprimé en UTC naïf
+    local_now      = datetime.now().astimezone()
+    midnight_local = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since          = midnight_local.astimezone(timezone.utc).replace(tzinfo=None)
+    now            = utc_now_naive()
+
+    machines = db.query(Machine).all()
+    stats: dict[int, dict] = {
+        m.id: {"runtime_minutes": 0.0, "downtime_minutes": 0.0}
+        for m in machines
+    }
+    state_seconds = compute_machine_state_seconds(db, since, now)
+    for mid, sec in state_seconds.items():
+        stats.setdefault(mid, {"runtime_minutes": 0.0, "downtime_minutes": 0.0})
+        stats[mid]["runtime_minutes"]  = round(sec["runtime_seconds"]  / 60.0, 1)
+        stats[mid]["downtime_minutes"] = round(sec["downtime_seconds"] / 60.0, 1)
+    return stats
 
 
 @router.get("/{machine_id}", response_model=MachineResponse)

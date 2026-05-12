@@ -28,19 +28,19 @@ export default function OeeChart({ breakdown = defaultBreakdown }) {
   ];
 
   return (
-    <div className="h-72 w-full min-h-[280px]">
+    <div className="h-full w-full min-h-[125px]">
       <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
+        <PieChart margin={{ top: 4, right: 4, left: 4, bottom: 4 }}>
           <Pie
             data={data}
             dataKey="value"
             nameKey="name"
             cx="50%"
             cy="50%"
-            innerRadius="52%"
-            outerRadius="78%"
+            innerRadius="32%"
+            outerRadius="48%"
             paddingAngle={2}
-            animationDuration={900}
+            isAnimationActive={false}
           >
             {data.map((entry) => (
               <Cell key={entry.name} fill={SLICE_COLORS[entry.name] || "#94a3b8"} />
@@ -56,9 +56,10 @@ export default function OeeChart({ breakdown = defaultBreakdown }) {
           />
           <Legend
             verticalAlign="bottom"
-            height={36}
+            iconSize={6}
+            wrapperStyle={{ paddingTop: 2 }}
             formatter={(value) => (
-              <span className="text-sm text-slate-600">{value}</span>
+              <span className="text-[10px] text-slate-600">{value}</span>
             )}
           />
         </PieChart>

@@ -37,29 +37,6 @@ const formatLastUpdate = (timestamp) => {
   return new Date(timestamp).toLocaleTimeString();
 };
 
-const computeRuntimeFromHistory = (stateHistory) => {
-  if (!Array.isArray(stateHistory) || !stateHistory.length) return null;
-  const now   = Date.now();
-  const since = now - 24 * 60 * 60 * 1000;
-  let runtime  = 0;
-  let downtime = 0;
-  for (const entry of stateHistory) {
-    const start = new Date(entry.started_at).getTime();
-    if (isNaN(start)) continue;
-    const end    = entry.ended_at ? new Date(entry.ended_at).getTime() : now;
-    const wStart = Math.max(start, since);
-    if (wStart >= end) continue;
-    const mins = (end - wStart) / 60000;
-    const s    = String(entry.state ?? "").trim().toUpperCase();
-    if (s === "MARCHE") runtime += mins;
-    else if (s === "PAUSE" || s === "ERREUR" || s === "MAINTENANCE") downtime += mins;
-  }
-  return {
-    runtime_minutes:  Math.round(runtime  * 10) / 10,
-    downtime_minutes: Math.round(downtime * 10) / 10,
-  };
-};
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MachineTable = ({
@@ -70,6 +47,7 @@ const MachineTable = ({
   getRealtimeForMachine,
   mqttConnectionStatus,
   machineKpis = {},
+  runtimeStats = {},
 }) => {
 
   /**
@@ -157,13 +135,10 @@ const MachineTable = ({
                   machine?.state || machine?.current_state || ""
                 ).trim().toUpperCase();
 
-                const histStats    = computeRuntimeFromHistory(machine.state_history);
-                const runtimeMins  = Number.isFinite(Number(rt?.runtime_minutes))
-                  ? rt.runtime_minutes
-                  : histStats?.runtime_minutes  ?? null;
-                const downtimeMins = Number.isFinite(Number(rt?.downtime_minutes))
-                  ? rt.downtime_minutes
-                  : histStats?.downtime_minutes ?? null;
+                // Runtime/downtime from backend endpoint (DB only, no MQTT)
+                const machineStats = runtimeStats[machine.id] ?? runtimeStats[String(machine.id)];
+                const runtimeMins  = machineStats?.runtime_minutes  ?? null;
+                const downtimeMins = machineStats?.downtime_minutes ?? null;
 
                 // lookup par machine.name = code machine = clé du backend
                 const kpi = getKpiForMachine(machine);

@@ -3,6 +3,7 @@ Service MES : envoie les rapports générés vers l'ERP via REST.
 Toutes les fonctions sont non-bloquantes (fire-and-log).
 """
 
+import json
 import logging
 from typing import Any
 
@@ -58,6 +59,11 @@ def send_report_to_erp(
     }
 
     try:
+        logger.debug(
+            "Payload ERP '%s' (%s):\n%s",
+            report_type, period_label,
+            json.dumps(body, indent=2, default=str),
+        )
         response = httpx.post(
             f"{ERP_BASE_URL}/erp/reports/receive",
             json=body,

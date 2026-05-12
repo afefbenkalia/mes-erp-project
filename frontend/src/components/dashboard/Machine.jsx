@@ -33,56 +33,6 @@ import EditMachineModal from "./EditMachineModal";
 import { subscribeMachineRealtime } from "../../services/telemetrySocket";
 import { subscribeMaintenanceEvents } from "../../services/maintenanceSocket";
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  HELPER — Runtime / downtime depuis state_history (dernières 24h)
-//  Source de vérité : DB (via machineAPI.getStateHistory)
-//  MQTT n'est PAS utilisé ici — évite les 0 quand MQTT est déconnecté
-// ─────────────────────────────────────────────────────────────────────────────
-
-function computeHistoryStats(stateHistory) {
-  if (!Array.isArray(stateHistory) || !stateHistory.length) return null;
-  const now   = Date.now();
-  const since = now - 24 * 60 * 60 * 1000;
-  let runtime  = 0;
-  let downtime = 0;
-  for (const entry of stateHistory) {
-    const start = new Date(entry.started_at).getTime();
-    if (isNaN(start)) continue;
-    const end    = entry.ended_at ? new Date(entry.ended_at).getTime() : now;
-    const wStart = Math.max(start, since);
-    if (wStart >= end) continue;
-    const mins = (end - wStart) / 60000;
-    const s    = String(entry.state ?? "").trim().toUpperCase();
-    if (s === "MARCHE") runtime  += mins;
-    else if (s === "PAUSE" || s === "ERREUR" || s === "MAINTENANCE") downtime += mins;
-  }
-  return {
-    runtime_minutes:  Math.round(runtime  * 10) / 10,
-    downtime_minutes: Math.round(downtime * 10) / 10,
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-//  HELPER — Agrège runtime/downtime sur TOUTES les machines depuis DB history
-//  Utilisé pour les graphiques — indépendant du MQTT
-// ─────────────────────────────────────────────────────────────────────────────
-
-function computeGlobalRuntimeFromMachines(machines) {
-  let totalRuntime  = 0;
-  let totalDowntime = 0;
-
-  for (const machine of machines) {
-    const stats = computeHistoryStats(machine.state_history);
-    if (!stats) continue;
-    totalRuntime  += stats.runtime_minutes;
-    totalDowntime += stats.downtime_minutes;
-  }
-
-  return {
-    totalRuntime:  Math.round(totalRuntime),
-    totalDowntime: Math.round(totalDowntime),
-  };
-}
 
 const STATE_COLORS = {
   MARCHE:      "#10b981",
@@ -104,8 +54,8 @@ const Machine = () => {
   const [isAddModalOpen,       setIsAddModalOpen]       = useState(false);
   const [mqttConnectionStatus, setMqttConnectionStatus] = useState("disconnected");
   const [realtimeByMachineId,  setRealtimeByMachineId]  = useState({});
-  const [performanceTrend,     setPerformanceTrend]     = useState([]);
   const [machineKpis,          setMachineKpis]          = useState({});
+  const [runtimeStats,         setRuntimeStats]         = useState({});
 
   const normalizeState = (value) => String(value ?? "").trim().toUpperCase();
 
@@ -155,38 +105,16 @@ const Machine = () => {
     };
   }, []);
 
-  // ── Chargement machines + state_history ───────────────────────────────────
+  // ── Chargement machines ───────────────────────────────────────────────────
   const loadMachines = useCallback(async () => {
     setLoading(true);
     try {
       const res = await machineAPI.getMachines({ include_current_state: true });
-
-      const machinesWithHistory = await Promise.all(
-        res.data.map(async (m) => {
-          const currentState = normalizeState(m.current_state || m.state || "MARCHE");
-          try {
-            const history = await machineAPI.getStateHistory(m.id);
-            let stateHistory = history.data ?? [];
-
-            // Fallback : si aucun historique, on synthétise l'état courant
-            if (stateHistory.length === 0 && m.current_state_started_at) {
-              stateHistory = [{
-                state:      currentState,
-                started_at: m.current_state_started_at,
-                ended_at:   null,
-              }];
-            }
-            return { ...m, state: currentState, state_history: stateHistory };
-          } catch {
-            const stateHistory = m.current_state_started_at
-              ? [{ state: currentState, started_at: m.current_state_started_at, ended_at: null }]
-              : [];
-            return { ...m, state: currentState, state_history: stateHistory };
-          }
-        })
-      );
-
-      setMachines(machinesWithHistory);
+      const machines = res.data.map((m) => ({
+        ...m,
+        state: normalizeState(m.current_state || m.state || "MARCHE"),
+      }));
+      setMachines(machines);
     } catch {
       toast.error("Erreur chargement");
     } finally {
@@ -203,31 +131,18 @@ const Machine = () => {
       onMessage: (payload) => {
         if (!payload || !payload.machineId) return;
         const machineKey = normalizeKey(payload.machineId);
-        setRealtimeByMachineId((prev) => {
-          const nextMap = {
-            ...prev,
-            [machineKey]: {
-              ...payload,
-              machineId: machineKey,
-              lastUpdate: new Date().toISOString(),
-            },
-          };
-          const nextStats = getRealtimeStatsFromMap(nextMap);
-          setPerformanceTrend((prevTrend) => {
-            const nextPoint = {
-              label: new Date().toLocaleTimeString("fr-FR", {
-                hour: "2-digit", minute: "2-digit",
-              }),
-              performance: nextStats.globalPerformance,
-            };
-            return [...prevTrend, nextPoint].slice(-7);
-          });
-          return nextMap;
-        });
+        setRealtimeByMachineId((prev) => ({
+          ...prev,
+          [machineKey]: {
+            ...payload,
+            machineId: machineKey,
+            lastUpdate: new Date().toISOString(),
+          },
+        }));
       },
     });
     return unsubscribe;
-  }, [getRealtimeStatsFromMap]);
+  }, []);
 
   // ── Maintenance WebSocket ─────────────────────────────────────────────────
   useEffect(() => {
@@ -278,6 +193,41 @@ const Machine = () => {
     const id = setInterval(syncStates, 30_000);
     return () => clearInterval(id);
   }, []);
+
+  // ── Runtime / Downtime depuis backend — reset à 00:00 heure système ──────
+  const loadRuntimeStats = useCallback(async () => {
+    try {
+      const res = await machineAPI.getRuntimeStats();
+      setRuntimeStats(res.data || {});
+    } catch {
+      // silent
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRuntimeStats();
+    const id = setInterval(loadRuntimeStats, 60_000);
+
+    // Refetch immédiat à 00:00:01 — sans attendre le tick suivant — pour
+    // que la table affiche 0min dès le passage au nouveau jour. Le timer
+    // se reprogramme automatiquement chaque nuit.
+    const scheduleMidnightReset = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now);
+      nextMidnight.setHours(24, 0, 1, 0);
+      const delay = nextMidnight.getTime() - now.getTime();
+      return setTimeout(() => {
+        loadRuntimeStats();
+        midnightTimer = scheduleMidnightReset();
+      }, delay);
+    };
+    let midnightTimer = scheduleMidnightReset();
+
+    return () => {
+      clearInterval(id);
+      clearTimeout(midnightTimer);
+    };
+  }, [loadRuntimeStats]);
 
   // ── KPIs production depuis dashboard API ──────────────────────────────────
   useEffect(() => {
@@ -351,77 +301,41 @@ const Machine = () => {
     ];
   };
 
-  /**
-   * ✅ FIX : Runtime vs Downtime calculé depuis DB state_history
-   *
-   * AVANT : utilisait getGlobalStats() → realtimeByMachineId (MQTT)
-   *         → affichait 0 si MQTT déconnecté ou pas encore reçu
-   *
-   * APRÈS : computeGlobalRuntimeFromMachines(machines)
-   *         → agrège state_history de chaque machine (chargé au montage)
-   *         → fonctionne toujours, même sans MQTT
-   */
+  // Moyenne par machine — comparable à une journée (24h max) et alignée
+  // avec la table : mêmes valeurs, même source (runtimeStats), même lookup.
   const getRuntimeVsDowntimeData = () => {
-    const { totalRuntime, totalDowntime } = computeGlobalRuntimeFromMachines(machines);
-
-    // Formater en heures pour une lecture plus lisible si > 60 min
     const formatLabel = (mins) => {
       if (mins === 0) return "0 min";
       const h = Math.floor(mins / 60);
       const m = mins % 60;
       return h > 0 ? `${h}h ${m}min` : `${m} min`;
     };
-
+    let totalRuntime = 0, totalDowntime = 0, count = 0;
+    for (const machine of machines) {
+      const stats = runtimeStats[machine.id] ?? runtimeStats[String(machine.id)];
+      if (!stats) continue;
+      totalRuntime  += Number(stats.runtime_minutes)  || 0;
+      totalDowntime += Number(stats.downtime_minutes) || 0;
+      count += 1;
+    }
+    const avgRuntime  = count > 0 ? Math.round(totalRuntime  / count) : 0;
+    const avgDowntime = count > 0 ? Math.round(totalDowntime / count) : 0;
     return [
-      {
-        name:    "Runtime",
-        minutes: totalRuntime,
-        label:   formatLabel(totalRuntime),
-      },
-      {
-        name:    "Downtime",
-        minutes: totalDowntime,
-        label:   formatLabel(totalDowntime),
-      },
+      { name: "Runtime",  minutes: avgRuntime,  label: formatLabel(avgRuntime) },
+      { name: "Downtime", minutes: avgDowntime, label: formatLabel(avgDowntime) },
     ];
   };
 
-  /**
-   * ✅ FIX : Tendance performance calculée depuis DB state_history
-   *
-   * AVANT : performanceTrend mis à jour uniquement par messages MQTT
-   *         → graphique vide si MQTT déconnecté
-   *
-   * APRÈS : calculé depuis state_history de chaque machine au chargement,
-   *         puis enrichi par MQTT en temps réel si disponible
-   */
   const getPerformanceOverTimeData = () => {
-    // Si on a des données MQTT temps réel, on les utilise
-    if (performanceTrend.length >= 2) {
-      return performanceTrend;
-    }
-
-    // Sinon : calculer depuis DB — on génère un point par machine
-    // représentant son taux de marche sur les 24h
-    const points = machines
-      .map((machine) => {
-        const stats = computeHistoryStats(machine.state_history);
-        if (!stats) return null;
-        const total = stats.runtime_minutes + stats.downtime_minutes;
-        const perf  = total > 0
-          ? Math.round((stats.runtime_minutes / total) * 100)
-          : 0;
-        return {
-          label:       machine.name,
-          performance: perf,
-        };
-      })
-      .filter(Boolean);
-
-    if (points.length === 0) {
-      return [{ label: "—", performance: 0 }];
-    }
-
+    const points = machines.map((machine) => {
+      const stats    = runtimeStats[machine.id] ?? runtimeStats[String(machine.id)];
+      const runtime  = Number(stats?.runtime_minutes)  || 0;
+      const downtime = Number(stats?.downtime_minutes) || 0;
+      const total    = runtime + downtime;
+      const perf     = total > 0 ? Math.round((runtime / total) * 100) : 0;
+      return { label: machine.name, performance: perf };
+    });
+    if (points.length === 0) return [{ label: "—", performance: 0 }];
     return points;
   };
 
@@ -447,20 +361,15 @@ const Machine = () => {
     const kpi    = machineKpis[normalizeKey(machine.name)] || {};
     const hasKpi = Object.keys(kpi).length > 0;
 
-    // ✅ FIX : runtime/downtime depuis DB state_history
-    //    Plus de dépendance au MQTT pour ces valeurs dans la table
-    const histStats = computeHistoryStats(machine.state_history);
+    if (!rtData && !hasKpi) return null;
 
-    if (!rtData && !hasKpi && !histStats) return null;
-
-    const { state: _ignored, ...rtSensorData } = rtData ?? {};
+    // Strip state + runtime/downtime from MQTT — those come from the backend endpoint
+    const { state: _s, runtime_minutes: _rm, downtime_minutes: _dm, ...rtSensorData } = rtData ?? {};
 
     return {
-      // Base DB (toujours présent)
-      ...(histStats ?? {}),
-      // MQTT override si disponible (temperature, pressure, speed, runtime_cache)
+      // MQTT sensor values only: temperature, pressure, speed, lastUpdate
       ...rtSensorData,
-      // KPIs production en dernier
+      // KPIs production
       ...kpi,
     };
   };
@@ -557,9 +466,7 @@ const Machine = () => {
       console.debug("[Machine] realtime map keys:", Object.keys(realtimeByMachineId));
       console.debug("[Machine] machineKpis keys:", Object.keys(machineKpis));
 
-      // Log runtime/downtime calculé depuis DB pour vérification
-      const globalRuntime = computeGlobalRuntimeFromMachines(machines);
-      console.debug("[Machine] DB runtime global:", globalRuntime);
+      console.debug("[Machine] runtimeStats (backend):", runtimeStats);
     }
   }, [machines, realtimeByMachineId, machineKpis]);
 
@@ -567,16 +474,35 @@ const Machine = () => {
   //  RENDER
   // ─────────────────────────────────────────────────────────────────────────
 
-  const globalStats   = getGlobalStats();
-  const hasMqttData   = Object.keys(realtimeByMachineId).length > 0;
-  const displayPerformance = hasMqttData
-    ? Number(globalStats.globalPerformance).toFixed(1)
-    : "—";
-  const displayRuntime = hasMqttData ? globalStats.formattedRuntime : "—";
+  const globalStats = getGlobalStats();
 
-  const statePieData  = getStateDistributionData();
-  const runtimeBarData = getRuntimeVsDowntimeData();   // ✅ depuis DB
-  const perfLineData  = getPerformanceOverTimeData();   // ✅ depuis DB + MQTT
+  // KPI Disponibilité / Runtime — moyenne par machine, aligné avec le chart
+  // Runtime vs Downtime (même runtimeStats, même lookup par machine.id)
+  let sumRuntime = 0, sumDowntime = 0, machineCount = 0;
+  for (const m of machines) {
+    const stats = runtimeStats[m.id] ?? runtimeStats[String(m.id)];
+    if (!stats) continue;
+    sumRuntime  += Number(stats.runtime_minutes)  || 0;
+    sumDowntime += Number(stats.downtime_minutes) || 0;
+    machineCount += 1;
+  }
+  const avgRuntime  = machineCount > 0 ? sumRuntime  / machineCount : 0;
+  const avgDowntime = machineCount > 0 ? sumDowntime / machineCount : 0;
+  const avgTotal    = avgRuntime + avgDowntime;
+  const dbAvailPct  = avgTotal > 0
+    ? Number((avgRuntime / avgTotal * 100).toFixed(1))
+    : null;
+  const avgRuntimeRounded = Math.round(avgRuntime);
+  const rh = Math.floor(avgRuntimeRounded / 60);
+  const rm = avgRuntimeRounded % 60;
+  const displayPerformance = dbAvailPct !== null ? String(dbAvailPct) : "—";
+  const displayRuntime     = avgRuntimeRounded > 0
+    ? (rh > 0 ? `${rh}h ${rm}min` : `${rm}min`)
+    : "0 min";
+
+  const statePieData   = getStateDistributionData();
+  const runtimeBarData = getRuntimeVsDowntimeData();
+  const perfLineData   = getPerformanceOverTimeData();
 
   const filtered = machines.filter((m) =>
     m.name.toLowerCase().includes(search.toLowerCase())
@@ -642,17 +568,17 @@ const Machine = () => {
       {/* KPI Disponibilité / Runtime */}
       <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <KpiCard
-          title="Disponibilité"
+          title="Disponibilité moyenne"
           value={displayPerformance}
-          suffix={hasMqttData ? "%" : undefined}
-          subtitle="Temps en MARCHE / temps total"
+          suffix={dbAvailPct !== null ? "%" : undefined}
+          subtitle="Runtime / (Runtime + Downtime) — depuis 00:00"
           icon={Activity}
           iconClassName="bg-blue-50 text-blue-700"
         />
         <KpiCard
-          title="Runtime cumulé"
+          title="Runtime moyen / machine"
           value={displayRuntime}
-          subtitle="Somme des durées de fonctionnement"
+          subtitle="Durée moyenne de MARCHE par machine — depuis 00:00"
           icon={BarChart3}
           iconClassName="bg-emerald-50 text-emerald-700"
         />
@@ -668,7 +594,7 @@ const Machine = () => {
             <PieChartIcon className="h-4 w-4 text-slate-400" aria-hidden />
           </div>
           <div className="h-72 w-full min-h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height={288}>
               <PieChart>
                 <Pie
                   data={statePieData}
@@ -679,7 +605,7 @@ const Machine = () => {
                   innerRadius="48%"
                   outerRadius="72%"
                   paddingAngle={2}
-                  animationDuration={800}
+                  isAnimationActive={false}
                 >
                   {statePieData.map((entry, index) => (
                     <Cell key={entry.name} fill={PIE_COLORS[index % PIE_COLORS.length]} />
@@ -708,7 +634,7 @@ const Machine = () => {
         {/* Bar — Runtime vs Downtime ✅ depuis DB state_history */}
         <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">Runtime vs Downtime</h2>
+            <h2 className="text-base font-semibold text-slate-900">Runtime vs Downtime — moyenne par machine (depuis 00:00)</h2>
             <BarChart3 className="h-4 w-4 text-slate-400" aria-hidden />
           </div>
 
@@ -725,7 +651,7 @@ const Machine = () => {
           </div>
 
           <div className="h-60 w-full min-h-[240px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height={240}>
               <BarChart
                 data={runtimeBarData}
                 margin={{ top: 8, right: 8, left: 0, bottom: 8 }}
@@ -764,7 +690,7 @@ const Machine = () => {
                 <Bar
                   dataKey="minutes"
                   radius={[8, 8, 0, 0]}
-                  animationDuration={800}
+                  isAnimationActive={false}
                   maxBarSize={72}
                 >
                   {runtimeBarData.map((entry) => (
@@ -787,12 +713,12 @@ const Machine = () => {
         <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
           <div className="mb-4 flex items-center justify-between gap-2">
             <h2 className="text-base font-semibold text-slate-900">
-              {hasMqttData ? "Tendance temps réel" : "Performance par machine (24h)"}
+              Disponibilité par machine (depuis 00:00)
             </h2>
             <TrendingUp className="h-4 w-4 text-slate-400" aria-hidden />
           </div>
           <div className="h-72 w-full min-h-[280px]">
-            <ResponsiveContainer width="100%" height="100%">
+            <ResponsiveContainer width="100%" height={288}>
               <LineChart
                 data={perfLineData}
                 margin={{ top: 8, right: 8, left: 0, bottom: 0 }}
@@ -831,7 +757,7 @@ const Machine = () => {
                   strokeWidth={2.5}
                   dot={{ r: 4, fill: "#2563eb", strokeWidth: 0 }}
                   activeDot={{ r: 6, strokeWidth: 0 }}
-                  animationDuration={800}
+                  isAnimationActive={false}
                 />
               </LineChart>
             </ResponsiveContainer>
@@ -864,6 +790,7 @@ const Machine = () => {
           getRealtimeForMachine={getRealtimeForMachine}
           mqttConnectionStatus={mqttConnectionStatus}
           machineKpis={machineKpis}
+          runtimeStats={runtimeStats}
         />
       </div>
 

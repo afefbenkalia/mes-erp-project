@@ -69,8 +69,11 @@ export const machineAPI = {
   closeCurrentState: (machineId) => 
     API.post(`/api/machines/${machineId}/close-current-state`),  // ← ajout /api
   
+  // Runtime / downtime pre-calculés depuis la DB (24h)
+  getRuntimeStats: () => API.get("/api/machines/runtime-stats"),
+
   // Historique des états
-  getStateHistory: (machineId, params = {}) => 
+  getStateHistory: (machineId, params = {}) =>
     API.get(`/api/machines/${machineId}/state-history`, { params }),  // ← ajout /api
   
   addStateHistory: (machineId, data) => 
@@ -83,6 +86,15 @@ export const machineAPI = {
 export const dashboardAPI = {
   getProductionSummary: () => API.get("/api/dashboard/summary"),
   getMachineKpis: () => API.get("/api/dashboard/machine-kpis"),
+  getProductionsList: () => API.get("/api/dashboard/productions"),
+  getProductionLast24h: (productionId = null) => {
+    const params = productionId ? { production_id: productionId } : {};
+    return API.get("/api/dashboard/production-last-24h", { params });
+  },
+  getScrapRateByOf: (ofNumero) => {
+    const params = ofNumero ? { of_numero: ofNumero } : {};
+    return API.get("/api/dashboard/scrap-rate", { params });
+  },
 };
 
 export const maintenanceAPI = {

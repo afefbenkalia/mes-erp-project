@@ -1,57 +1,26 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   Gauge,
   Package,
-  Percent,
   ShieldCheck,
   Timer,
 } from "lucide-react";
 import { dashboardAPI } from "../../../api/api";
 import KpiCard from "./KpiCard";
-import ProductionChart from "./ProductionChart";
 import MachineChart from "./MachineChart";
 import OeeChart from "./OeeChart";
 import PerformanceTrendChart from "./PerformanceTrendChart";
+import ProductionLast24HChart from "./ProductionLast24HChart";
+import ScrapRateChart from "./ScrapRateChart";
 import { subscribeDashboardMqtt } from "../../../services/telemetrySocket";
 
-/** Demo payload when API is unreachable or empty DB — keeps UI runnable. */
-const DEMO_PAYLOAD = {
-  kpis: {
-    total_production_24h: 12480,
-    oee: 78.4,
-    availability: 91.2,
-    performance: 88.5,
-    quality: 97.1,
-  },
-  production_by_hour: Array.from({ length: 24 }, (_, i) => {
-    const h = String(i).padStart(2, "0");
-    return {
-      label: `${h}:00`,
-      quantity: Math.round(180 + Math.sin(i / 3) * 120 + (i % 5) * 40),
-    };
-  }),
-  production_by_machine: [
-    { machine: "Ligne A", quantity: 4200 },
-    { machine: "Ligne B", quantity: 3980 },
-    { machine: "Ligne C", quantity: 2650 },
-    { machine: "Ligne D", quantity: 1650 },
-  ],
-  oee_breakdown: {
-    availability: 91.2,
-    performance: 88.5,
-    quality: 97.1,
-  },
-  performance_over_time: Array.from({ length: 24 }, (_, i) => {
-    const h = String(i).padStart(2, "0");
-    return {
-      label: `${h}:00`,
-      performance: Math.min(
-        100,
-        Math.round(65 + Math.sin(i / 4) * 22 + (i % 3) * 5)
-      ),
-    };
-  }),
+const EMPTY_STATE = {
+  kpis: { total_production_24h: 0, oee: 0, availability: 0, performance: 0, quality: 0 },
+  production_by_hour: [],
+  production_by_machine: [],
+  oee_breakdown: { availability: 0, performance: 0, quality: 0 },
+  performance_over_time: [],
 };
 
 function normalizePayload(raw) {
@@ -82,202 +51,83 @@ function normalizePayload(raw) {
   };
 }
 
-const HISTORY_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-const clampPercent = (value) => Math.max(0, Math.min(100, Number(value) || 0));
-
-const safePercent = (num, den) => {
-  if (!Number.isFinite(num) || !Number.isFinite(den) || den <= 0) return 0;
-  return clampPercent((num / den) * 100);
-};
-
-const toTimeLabel = (date) =>
-  date.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
-
-function trimHistory(series, nowTs) {
-  const minTs = nowTs - HISTORY_WINDOW_MS;
-  return series.filter((item) => item.ts >= minTs);
-}
-
 export default function ProductionDashboard() {
-  const [data, setData] = useState(() => normalizePayload(DEMO_PAYLOAD));
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [fromDemo, setFromDemo] = useState(false);
   const [mqttStatus, setMqttStatus] = useState("Disconnected");
-  const [machinesMap, setMachinesMap] = useState({});
-  const [globalMetrics, setGlobalMetrics] = useState({});
+  const lastRealtimeRefreshRef = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setLoading(true);
     try {
       const res = await dashboardAPI.getProductionSummary();
       const normalized = normalizePayload(res.data);
-      if (normalized) {
-        setData(normalized);
-        setFromDemo(false);
-      } else {
-        setData(normalizePayload(DEMO_PAYLOAD));
-        setFromDemo(true);
-      }
+      setData(normalized ?? EMPTY_STATE);
     } catch {
-      setData(normalizePayload(DEMO_PAYLOAD));
-      setFromDemo(true);
+      setData(EMPTY_STATE);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
+  // Initial load + polling régulier (15s) pour détecter immédiatement les
+  // nouvelles entrées etapes_production / Production / Rebut insérées en DB.
+  // Refetch supplémentaire à 00:00:01 pour reset propre du nouveau cycle 24h.
   useEffect(() => {
     load();
+    const pollId = setInterval(() => load({ silent: true }), 15_000);
+
+    const scheduleMidnightReset = () => {
+      const now = new Date();
+      const nextMidnight = new Date(now);
+      nextMidnight.setHours(24, 0, 1, 0);
+      const delay = nextMidnight.getTime() - now.getTime();
+      return setTimeout(() => {
+        load({ silent: true });
+        midnightTimer = scheduleMidnightReset();
+      }, delay);
+    };
+    let midnightTimer = scheduleMidnightReset();
+
+    return () => {
+      clearInterval(pollId);
+      clearTimeout(midnightTimer);
+    };
   }, [load]);
 
+  // WebSocket : refresh instantané sur événements globaux (production/rebut/state).
   useEffect(() => {
     const unsubscribe = subscribeDashboardMqtt({
       onConnectionChange: setMqttStatus,
-      onGlobalMessage: (metrics) => {
-        setGlobalMetrics((prev) => ({
-          ...prev,
-          ...metrics,
-          oee: metrics?.oee ?? prev.oee,
-          availability: metrics?.availability ?? prev.availability,
-          performance: metrics?.performance ?? prev.performance,
-          quality: metrics?.quality ?? prev.quality,
-          trs: metrics?.trs ?? prev.trs,
-        }));
-      },
-      onMachineMessage: (machinePayload) => {
-        if (!machinePayload?.machineId) return;
-        const machineId = String(machinePayload.machineId);
-        setMachinesMap((prev) => ({
-          ...prev,
-          [machineId]: {
-            ...(prev[machineId] || {}),
-            ...machinePayload,
-            machineId,
-            ts: Date.now(),
-          },
-        }));
+      onGlobalMessage: () => {
+        const now = Date.now();
+        if (now - lastRealtimeRefreshRef.current >= 1500) {
+          lastRealtimeRefreshRef.current = now;
+          load({ silent: true });
+        }
       },
     });
-
     return unsubscribe;
-  }, []);
+  }, [load]);
 
-  useEffect(() => {
-    const machines = Object.values(machinesMap);
-    if (machines.length === 0) return;
-
-    const now = new Date();
-    const nowTs = now.getTime();
-    const label = toTimeLabel(now);
-
-    const totals = machines.reduce(
-      (acc, machine) => {
-        const runtime = Number(machine.runtime_minutes) || 0;
-        const downtime = Number(machine.downtime_minutes) || 0;
-        const production = Number(machine.production) || 0;
-        const rejects = Number(machine.rejects) || 0;
-        const expectedProduction =
-          Number(machine.expected_production) || Math.max(production, 1);
-
-        const availability = safePercent(runtime, runtime + downtime) / 100;
-        const performance = safePercent(production, expectedProduction) / 100;
-        const quality = safePercent(production - rejects, Math.max(production, 1)) / 100;
-        const oee = availability * performance * quality;
-
-        acc.runtime += runtime;
-        acc.downtime += downtime;
-        acc.production += production;
-        acc.rejects += rejects;
-        acc.expected += expectedProduction;
-        acc.machineBars.push({
-          machine: machine.machineId || "Unknown",
-          quantity: Math.round(oee * 1000) / 10, // TRS/OEE % per machine
-        });
-        return acc;
-      },
-      {
-        runtime: 0,
-        downtime: 0,
-        production: 0,
-        rejects: 0,
-        expected: 0,
-        machineBars: [],
-      }
-    );
-
-    const availability = safePercent(totals.runtime, totals.runtime + totals.downtime);
-    const performance =
-      globalMetrics?.performance !== undefined
-        ? clampPercent(globalMetrics.performance)
-        : safePercent(totals.production, totals.expected);
-    const quality =
-      globalMetrics?.quality !== undefined
-        ? clampPercent(globalMetrics.quality)
-        : safePercent(totals.production - totals.rejects, Math.max(totals.production, 1));
-    const oee =
-      globalMetrics?.oee !== undefined
-        ? clampPercent(globalMetrics.oee)
-        : clampPercent((availability / 100) * (performance / 100) * (quality / 100) * 100);
-
-    setData((prev) => ({
-      ...prev,
-      production_by_hour: trimHistory(
-        [
-          ...(prev.production_by_hour || []).map((item) => ({
-            ts: item.ts || nowTs,
-            label: item.label,
-            quantity: Number(item.quantity) || 0,
-          })),
-          { ts: nowTs, label, quantity: totals.production },
-        ],
-        nowTs
-      ).map(({ ts, label: l, quantity }) => ({ ts, label: l, quantity })),
-      performance_over_time: trimHistory(
-        [
-          ...(prev.performance_over_time || []).map((item) => ({
-            ts: item.ts || nowTs,
-            label: item.label,
-            performance: Number(item.performance) || 0,
-          })),
-          { ts: nowTs, label, performance },
-        ],
-        nowTs
-      ).map(({ ts, label: l, performance: p }) => ({ ts, label: l, performance: p })),
-      kpis: {
-        total_production_24h: totals.production,
-        oee,
-        availability,
-        performance,
-        quality,
-      },
-      production_by_machine: totals.machineBars,
-      oee_breakdown: {
-        availability,
-        performance,
-        quality,
-      },
-    }));
-    setFromDemo(false);
-    setLoading(false);
-  }, [machinesMap, globalMetrics]);
-
-  const k = data?.kpis || DEMO_PAYLOAD.kpis;
+  const displayed = data ?? EMPTY_STATE;
+  const k = displayed.kpis;
+  const isEmpty = !loading && k.total_production_24h === 0 && k.availability === 0;
 
   return (
-    <div className="space-y-7 px-4 sm:px-6 lg:px-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-4 px-2 sm:px-3 lg:px-4">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+          <h1 className="text-lg font-semibold tracking-tight text-slate-900">
             Production Dashboard
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Manufacturing KPIs and trends — last 24 hours
+          <p className="mt-0.5 text-[11px] text-slate-500">
+            Manufacturing KPIs and trends — depuis 00:00 (heure système)
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           <span
-            className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${
+            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${
               mqttStatus === "Connected"
                 ? "bg-emerald-50 text-emerald-800 ring-emerald-200/80"
                 : "bg-slate-100 text-slate-700 ring-slate-200/80"
@@ -285,23 +135,23 @@ export default function ProductionDashboard() {
           >
             MQTT {mqttStatus}
           </span>
-          {fromDemo ? (
-            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200/80">
-              Demo data
+          {isEmpty ? (
+            <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80">
+              Aucune production
             </span>
           ) : null}
           <button
             type="button"
             onClick={load}
             disabled={loading}
-            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
+            className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
           >
             {loading ? "Refreshing…" : "Refresh"}
           </button>
         </div>
       </div>
 
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
           title="Total production (24h)"
           value={Math.round(k.total_production_24h).toLocaleString()}
@@ -340,50 +190,50 @@ export default function ProductionDashboard() {
         />
       </section>
 
-      <section className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">
-              Production — last 24h
-            </h2>
-            <Percent className="h-4 w-4 text-slate-400" aria-hidden />
-          </div>
-          <ProductionChart data={data.production_by_hour} />
-        </article>
-
-        <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <article className="rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">
               TRS per machine
             </h2>
-            <Package className="h-4 w-4 text-slate-400" aria-hidden />
+            <Package className="h-3.5 w-3.5 text-slate-400" aria-hidden />
           </div>
-          {data.production_by_machine.length === 0 ? (
-            <p className="py-16 text-center text-sm text-slate-500">
+          {displayed.production_by_machine.length === 0 ? (
+            <p className="py-12 text-center text-xs text-slate-500">
               No machine data in this window.
             </p>
           ) : (
-            <MachineChart data={data.production_by_machine} />
+            <MachineChart data={displayed.production_by_machine} />
           )}
         </article>
 
-        <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">OEE breakdown</h2>
-            <Gauge className="h-4 w-4 text-slate-400" aria-hidden />
-          </div>
-          <OeeChart breakdown={data.oee_breakdown} />
-        </article>
-
-        <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">
+        <article className="rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">
               Performance over time
             </h2>
-            <Activity className="h-4 w-4 text-slate-400" aria-hidden />
+            <Activity className="h-3.5 w-3.5 text-slate-400" aria-hidden />
           </div>
-          <PerformanceTrendChart data={data.performance_over_time} />
+          <PerformanceTrendChart data={displayed.performance_over_time} />
         </article>
+      </section>
+
+      <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <article className="flex h-full flex-col rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-900">OEE breakdown</h2>
+            <Gauge className="h-3.5 w-3.5 text-slate-400" aria-hidden />
+          </div>
+          <div className="flex-1">
+            <OeeChart breakdown={displayed.oee_breakdown} />
+          </div>
+        </article>
+
+        <ScrapRateChart />
+      </section>
+
+      <section className="grid grid-cols-1 gap-3">
+        <ProductionLast24HChart />
       </section>
     </div>
   );

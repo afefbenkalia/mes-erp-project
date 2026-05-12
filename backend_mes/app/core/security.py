@@ -44,6 +44,11 @@ def generate_temporary_password(length: int = 12) -> str:
     return password
 
 
+def get_apps_for_user(erp_access: bool) -> list[str]:
+    """Return the list of apps the user can access based on erp_access permission."""
+    return ["MES", "ERP"] if erp_access else ["MES"]
+
+
 def create_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """
     Create JWT token with optional expiration.

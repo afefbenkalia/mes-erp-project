@@ -69,6 +69,9 @@ def create_user_by_admin(db: Session, user_data: UserCreateByAdmin) -> User:
     # Generate temporary password
     temp_password = generate_temporary_password()
     
+    # erp_access only valid for managers
+    erp_access = user_data.erp_access if user_data.role == "manager" else False
+
     # Create new user
     db_user = User(
         cin=user_data.cin.strip(),
@@ -77,6 +80,7 @@ def create_user_by_admin(db: Session, user_data: UserCreateByAdmin) -> User:
         email=normalize_email(user_data.email),
         hashed_password=hash_password(temp_password),
         role=user_data.role,
+        erp_access=erp_access,
         is_active=True,
         is_first_login=True,
         created_at=datetime.utcnow()
@@ -197,10 +201,6 @@ def delete_user(db: Session, user_id: int):
     logger.info(f"User {user.email} deleted")
     return True
 
-    db.delete(user)
-    db.commit()
-    return True
-
 
 def get_users_count(db: Session):
     return db.query(User).count()
@@ -229,6 +229,8 @@ def update_user_by_admin(db: Session, user_id: int, user_data: UserUpdateByAdmin
     user.email = normalized_email
     user.role = user_data.role
     user.is_active = user_data.is_active
+    # erp_access only valid for managers — reset if role changed
+    user.erp_access = user_data.erp_access if user_data.role == "manager" else False
 
     db.commit()
     db.refresh(user)

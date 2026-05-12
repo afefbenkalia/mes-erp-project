@@ -10,6 +10,7 @@ class UserCreateByAdmin(BaseModel):
     prenom: str = Field(..., min_length=1, max_length=100)
     email: EmailStr
     role: str = Field(default="operator", pattern="^(admin|manager|operator|maintenance)$")
+    erp_access: bool = False
 
 
 class UserUpdateByAdmin(BaseModel):
@@ -19,6 +20,7 @@ class UserUpdateByAdmin(BaseModel):
     email: EmailStr
     role: str = Field(..., pattern="^(admin|manager|operator|maintenance)$")
     is_active: bool = True
+    erp_access: bool = False
 
 
 # User logs in with email and password
@@ -43,6 +45,7 @@ class UserResponse(BaseModel):
     role: str
     is_active: bool
     is_first_login: bool
+    erp_access: bool
     created_at: datetime
     last_login: Optional[datetime]
     login_count: int
