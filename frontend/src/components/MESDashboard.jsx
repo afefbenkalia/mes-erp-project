@@ -122,7 +122,203 @@ const SIDEBAR_W_CLOSE = 62;
 const NAVBAR_H        = 62;
 
 /* ─────────────────────────────────────────
-   COMPONENT
+   COMPOSANT DE RECHERCHE AMÉLIORÉ
+───────────────────────────────────────── */
+function SearchOverlay({ isOpen, onClose, searchQuery, setSearchQuery, menu, activeModule, setActiveModule }) {
+  const [filteredItems, setFilteredItems] = useState([]);
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const inputRef = useRef(null);
+  const overlayRef = useRef(null);
+
+  useEffect(() => {
+    if (isOpen && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (searchQuery.trim()) {
+      const filtered = menu.filter(item =>
+        item.label.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+      setFilteredItems(filtered);
+    } else {
+      setFilteredItems([]);
+    }
+    setSelectedIndex(-1);
+  }, [searchQuery, menu]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (overlayRef.current && !overlayRef.current.contains(event.target)) {
+        onClose();
+      }
+    };
+    const handleEscape = (event) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('keydown', handleEscape);
+    }
+    
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [isOpen, onClose]);
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.min(prev + 1, filteredItems.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedIndex(prev => Math.max(prev - 1, -1));
+    } else if (e.key === 'Enter' && selectedIndex >= 0) {
+      handleSelectItem(filteredItems[selectedIndex]);
+    }
+  };
+
+  const handleSelectItem = (item) => {
+    setActiveModule(item.id);
+    setSearchQuery("");
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div style={{
+      position: "fixed",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: "rgba(0,0,0,0.5)",
+      zIndex: 1000,
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "center",
+      backdropFilter: "blur(4px)",
+    }}>
+      <div ref={overlayRef} style={{
+        marginTop: "80px",
+        width: "500px",
+        maxWidth: "90%",
+        background: "white",
+        borderRadius: "16px",
+        boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+        overflow: "hidden",
+      }}>
+        <div style={{ padding: "16px", borderBottom: "1px solid #e2e8f0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <Search size={20} color="#94a3b8" />
+            <input
+              ref={inputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Rechercher un module..."
+              style={{
+                flex: 1,
+                border: "none",
+                fontSize: "16px",
+                outline: "none",
+                padding: "8px 0",
+                background: "transparent",
+              }}
+            />
+            <button
+              onClick={onClose}
+              style={{
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                borderRadius: "6px",
+              }}
+            >
+              <X size={20} color="#94a3b8" />
+            </button>
+          </div>
+        </div>
+        
+        <div style={{ maxHeight: "400px", overflowY: "auto" }}>
+          {filteredItems.length > 0 ? (
+            filteredItems.map((item, index) => (
+              <button
+                key={item.id}
+                onClick={() => handleSelectItem(item)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "12px",
+                  width: "100%",
+                  padding: "12px 16px",
+                  border: "none",
+                  background: index === selectedIndex ? "#f1f5f9" : "white",
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "background 0.15s",
+                }}
+                onMouseEnter={() => setSelectedIndex(index)}
+              >
+                <span style={{ color: "#4a7fc1" }}>{item.icon}</span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, color: "#0f172a" }}>{item.label}</div>
+                  <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>
+                    Module {item.id}
+                  </div>
+                </div>
+                {activeModule === item.id && (
+                  <span style={{
+                    width: "8px",
+                    height: "8px",
+                    borderRadius: "50%",
+                    background: "#22c55e",
+                  }} />
+                )}
+              </button>
+            ))
+          ) : searchQuery ? (
+            <div style={{
+              padding: "40px 20px",
+              textAlign: "center",
+              color: "#94a3b8",
+            }}>
+              <Search size={40} style={{ marginBottom: "12px", opacity: 0.5 }} />
+              <p>Aucun résultat pour "{searchQuery}"</p>
+            </div>
+          ) : null}
+        </div>
+        
+        {filteredItems.length > 0 && (
+          <div style={{
+            padding: "12px 16px",
+            borderTop: "1px solid #f1f5f9",
+            fontSize: "12px",
+            color: "#94a3b8",
+            background: "#f8fafc",
+            display: "flex",
+            gap: "16px",
+          }}>
+            <span>↑↓ Naviguer</span>
+            <span>↵ Sélectionner</span>
+            <span>⎋ Fermer</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   COMPONENT PRINCIPAL
 ───────────────────────────────────────── */
 export default function MESDashboard() {
   const [user,          setUser]         = useState(null);
@@ -130,12 +326,14 @@ export default function MESDashboard() {
   const [sidebarOpen,   setSidebarOpen]  = useState(true);
   const [currentTime,   setCurrentTime]  = useState(new Date());
   const [searchQuery,   setSearchQuery]  = useState("");
+  const [searchOpen,    setSearchOpen]   = useState(false);
   const [notifOpen,     setNotifOpen]    = useState(false);
   const [notifs,        setNotifs]       = useState([]);
   const [notifTick,     setNotifTick]    = useState(0);
   const notifIdRef      = useRef(0);
   const userRoleRef     = useRef(null);
   const seenNotifKeys   = useRef(new Set());
+  const searchShortcutRef = useRef(null);
 
   const notifRef = useRef(null);
 
@@ -148,6 +346,18 @@ export default function MESDashboard() {
   useEffect(() => {
     const id = setInterval(() => setNotifTick((t) => t + 1), 30_000);
     return () => clearInterval(id);
+  }, []);
+
+  /* ── Search shortcut Ctrl/Cmd + K ── */
+  useEffect(() => {
+    const handleGlobalSearchShortcut = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    document.addEventListener('keydown', handleGlobalSearchShortcut);
+    return () => document.removeEventListener('keydown', handleGlobalSearchShortcut);
   }, []);
 
   /* ── Notification push helpers ── */
@@ -294,6 +504,20 @@ export default function MESDashboard() {
       background: "#f1f5f9",
     }}>
 
+      {/* Overlay de recherche */}
+      <SearchOverlay
+        isOpen={searchOpen}
+        onClose={() => {
+          setSearchOpen(false);
+          setSearchQuery("");
+        }}
+        searchQuery={searchQuery}
+        setSearchQuery={setSearchQuery}
+        menu={menu}
+        activeModule={activeModule}
+        setActiveModule={setActiveModule}
+      />
+
       {/* ══════════════════════════════════════
           SIDEBAR
       ══════════════════════════════════════ */}
@@ -328,7 +552,7 @@ export default function MESDashboard() {
           {sidebarOpen && (
             <div style={{ overflow: "hidden" }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: "#ffffff", letterSpacing: "-0.3px", lineHeight: 1.2 }}>SITEX</div>
-              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", letterSpacing: "0.8px", textTransform: "uppercase", marginTop: 2 }}>Sousse · MES</div>
+              <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", letterSpacing: "0.8px", textTransform: "uppercase", marginTop: 2 }}>Sousse · CARDAGE MES</div>
             </div>
           )}
         </div>
@@ -455,7 +679,7 @@ export default function MESDashboard() {
 
           {sidebarOpen && (
             <div style={{ textAlign: "center", marginTop: 10 }}>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontWeight: 500 }}>MES Platform · v2.0</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)", fontWeight: 500 }}>MES Platform </div>
               <div style={{ fontSize: 10, color: "rgba(255,255,255,0.18)", marginTop: 2 }}>© 2026 SITEX Sousse</div>
             </div>
           )}
@@ -491,7 +715,7 @@ export default function MESDashboard() {
       ══════════════════════════════════════ */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
 
-        {/* TOP NAVBAR */}
+        {/* TOP NAVBAR AVEC TITRE "Système MES" AVANT LA RECHERCHE */}
         <header style={{
           height: NAVBAR_H, flexShrink: 0,
           background: "white",
@@ -504,85 +728,97 @@ export default function MESDashboard() {
           marginBottom: 12,
         }}>
 
-          {/* LEFT — search */}
-          <div style={{ display: "flex", alignItems: "center", minWidth: 0, flex: "0 1 auto" }}>
-            {/* Search Bar */}
-            <div style={{ position: "relative", width: 280, flexShrink: 0 }}>
-              <Search size={15} style={{
-                position: "absolute", left: 12, top: "50%",
-                transform: "translateY(-50%)", color: "#94a3b8", pointerEvents: "none",
-              }} />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                placeholder="Rechercher…"
-                style={{
-                  width: "100%", boxSizing: "border-box",
-                  padding: "0 36px 0 38px",
-                  height: 38, borderRadius: 10,
-                  background: "#f1f5f9",
-                  border: "1.5px solid transparent",
-                  fontSize: 13.5, color: "#0f172a",
-                  outline: "none",
-                  transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
-                  fontFamily: "inherit",
-                }}
-                onFocus={e => {
-                  e.target.style.background   = "white";
-                  e.target.style.borderColor  = "#93c5fd";
-                  e.target.style.boxShadow    = "0 0 0 3px rgba(147,197,253,0.25)";
-                }}
-                onBlur={e => {
-                  e.target.style.background   = "#f1f5f9";
-                  e.target.style.borderColor  = "transparent";
-                  e.target.style.boxShadow    = "none";
-                }}
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery("")}
-                  style={{
-                    position: "absolute", right: 10, top: "50%",
-                    transform: "translateY(-50%)",
-                    background: "none", border: "none",
-                    cursor: "pointer", color: "#94a3b8",
-                    display: "flex", alignItems: "center", padding: 2,
-                  }}
-                >
-                  <X size={14} />
-                </button>
-              )}
+          {/* LEFT — Titre Système MES + recherche */}
+          <div style={{ display: "flex", alignItems: "center", gap: 20, minWidth: 0, flex: "0 1 auto" }}>
+            {/* Titre Système MES */}
+            <div style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+            }}>
+              <span style={{
+                fontSize: 16,
+                fontWeight: 700,
+                color: "#1e293b",
+                letterSpacing: "-0.3px",
+                background: "linear-gradient(135deg, #1e293b 0%, #2d3a4e 100%)",
+                backgroundClip: "text",
+                WebkitBackgroundClip: "text",
+                color: "transparent",
+              }}>
+                Système MES
+              </span>
             </div>
+
+            {/* Barre de recherche */}
+            <button
+              onClick={() => setSearchOpen(true)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "10px",
+                padding: "0 14px",
+                height: 38,
+                borderRadius: 10,
+                background: "#f1f5f9",
+                border: "1.5px solid transparent",
+                cursor: "pointer",
+                transition: "all 0.15s",
+                minWidth: 280,
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.background = "#f8fafc";
+                e.currentTarget.style.borderColor = "#e2e8f0";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.background = "#f1f5f9";
+                e.currentTarget.style.borderColor = "transparent";
+              }}
+            >
+              <Search size={15} color="#94a3b8" />
+              <span style={{ flex: 1, textAlign: "left", color: "#94a3b8", fontSize: 13.5 }}>
+                Rechercher un module...
+              </span>
+              <kbd style={{
+                background: "#e2e8f0",
+                padding: "2px 6px",
+                borderRadius: 4,
+                fontSize: 11,
+                color: "#475569",
+                fontFamily: "monospace",
+              }}>
+                ⌘K
+              </kbd>
+            </button>
           </div>
 
           {/* SPACER */}
           <div style={{ flex: 1 }} />
 
-          {/* RIGHT */}
-          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {/* RIGHT - avec affichage Manager + email */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
 
-            {/* Clock */}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 10px" }}>
+            {/* Horloge */}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 8px" }}>
               <Clock3 size={14} color="#94a3b8" />
               <span style={{
-                color: "#475569", fontSize: 13, fontWeight: 500,
+                color: "#475569", fontSize: 12.5, fontWeight: 500,
                 fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", letterSpacing: "-0.01em",
               }}>
                 {currentTime.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "short" })}
-                <span style={{ color: "#cbd5e1", margin: "0 5px" }}>·</span>
+                <span style={{ color: "#cbd5e1", margin: "0 4px" }}>·</span>
                 {currentTime.toLocaleTimeString("fr-FR")}
               </span>
             </div>
 
             {/* Notification bell */}
-            <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
+            <div ref={notifRef} style={{ position: "relative", padding: "0 4px" }}>
               <button
                 onClick={() => setNotifOpen(o => !o)}
                 title="Notifications"
                 style={{
                   position: "relative",
-                  width: 38, height: 38, borderRadius: 9,
+                  width: 36, height: 36, borderRadius: 9,
                   background: notifOpen ? "#f1f5f9" : "transparent",
                   border: notifOpen ? "1.5px solid #e2e8f0" : "1.5px solid transparent",
                   cursor: "pointer",
@@ -603,21 +839,21 @@ export default function MESDashboard() {
                   }
                 }}
               >
-                <Bell size={18} />
+                <Bell size={17} />
                 {notifs.length > 0 && (
                   <span style={{
-                    position: "absolute", top: 5, right: 5,
-                    width: 17, height: 17, borderRadius: "50%",
+                    position: "absolute", top: 4, right: 4,
+                    width: 16, height: 16, borderRadius: "50%",
                     background: "#ef4444", border: "2px solid white",
                     display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 10, fontWeight: 800, color: "white", lineHeight: 1,
+                    fontSize: 9, fontWeight: 800, color: "white", lineHeight: 1,
                   }}>
                     {notifs.length}
                   </span>
                 )}
               </button>
 
-              {/* Dropdown */}
+              {/* Dropdown notifications */}
               {notifOpen && (
                 <div style={{
                   position: "absolute", top: "calc(100% + 10px)", right: 0,
@@ -715,20 +951,52 @@ export default function MESDashboard() {
                   )}
                 </div>
               )}
-              </div>
+            </div>
 
             <VDivider />
 
-            {/* User */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 0 0 6px" }}>
-              <div style={{ lineHeight: 1.2 }}>
-                <p style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "#0f172a", letterSpacing: "-0.02em" }}>
-                  {user.username}
-                </p>
-                <p style={{ margin: "2px 0 0", fontSize: 12, color: "#94a3b8", fontWeight: 500 }}>
-                  {roleLabel}
-                </p>
-              </div>
+            {/* User - Affichage Manager avec email */}
+            <div style={{ 
+              display: "flex", 
+              flexDirection: "column", 
+              alignItems: "flex-end",
+              padding: "0 4px 0 8px"
+            }}>
+              <p style={{ 
+                margin: 0, 
+                fontSize: 14, 
+                fontWeight: 700, 
+                color: "#0f172a", 
+                letterSpacing: "-0.02em",
+                lineHeight: 1.3
+              }}>
+                {user.username}
+              </p>
+              <p style={{ 
+                margin: "2px 0 0", 
+                fontSize: 11, 
+                color: "#94a3b8", 
+                fontWeight: 500,
+                letterSpacing: "-0.01em"
+              }}>
+                {user.email || user.username?.toLowerCase().replace(/\s/g, '') + "@sitex.com"}
+              </p>
+            </div>
+
+            {/* Petit badge Manager */}
+            <div style={{
+              background: roleColor.bg,
+              color: roleColor.text,
+              padding: "4px 10px",
+              borderRadius: 20,
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.2px",
+              marginLeft: 4,
+              whiteSpace: "nowrap",
+              border: `1px solid ${roleColor.border}`,
+            }}>
+              {roleLabel}
             </div>
           </div>
         </header>

@@ -1,4 +1,4 @@
-// Production.jsx – Version avec affichage des données simulées pendant l'auto
+// Production.jsx – Version avec champs de formulaire en lecture seule dans l'onglet Lancer Production
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
@@ -1027,8 +1027,9 @@ const Production = ({ role = "operator" }) => {
 
   const handleLancer = async (e) => {
     e.preventDefault();
+    // Les champs sont déjà pré-remplis automatiquement, on vérifie juste qu'ils existent
     if (!formLancer.of_id || !formLancer.produit_fini || !formLancer.quantite_produit_fini)
-      return flash("Veuillez remplir tous les champs", true);
+      return flash("Veuillez sélectionner un OF valide", true);
 
     setIsSubmitting(true);
     try {
@@ -1205,16 +1206,14 @@ const Production = ({ role = "operator" }) => {
           ))}
         </div>
 
-        {/* ONGLET : LANCER PRODUCTION */}
+        {/* ONGLET : LANCER PRODUCTION - Champs en lecture seule */}
         {safeActiveTab === "lancer" && canAccess("lancer", role) && (
           <div style={s.section}>
             <div style={s.sectionHeader}>
               <div>
                 <p style={s.sectionTitle}>🚀 Lancer une nouvelle production</p>
                 <p style={s.sectionSub}>
-                  Seuls les ordres de fabrication au statut{" "}
-                  <strong style={{ color: C.accent }}>Planifié</strong> ou{" "}
-                  <strong style={{ color: C.green }}>En cours</strong> sont disponibles.
+                  Sélectionnez un OF — Les champs sont automatiquement remplis et en lecture seule
                 </p>
               </div>
             </div>
@@ -1263,28 +1262,34 @@ const Production = ({ role = "operator" }) => {
                 <div style={s.fg}>
                   <label style={s.label}>🧵 Produit fini</label>
                   <input
-                    style={{ ...s.input, background: C.bg }}
+                    style={s.inputDisabled}
                     type="text"
                     value={formLancer.produit_fini}
                     readOnly
+                    disabled
                     placeholder="Auto-rempli"
                   />
                 </div>
                 <div style={s.fg}>
                   <label style={s.label}>📦 Quantité PF (kg) <span style={s.req}>*</span></label>
                   <input
-                    style={formLancer.quantite_produit_fini ? s.inputHighlight : s.input}
+                    style={s.inputDisabled}
                     type="number"
                     step="0.01"
-                    placeholder="Ex: 500"
+                    placeholder="Auto-rempli"
                     value={formLancer.quantite_produit_fini}
-                    onChange={(e) => setFormLancer({ ...formLancer, quantite_produit_fini: e.target.value })}
+                    readOnly
+                    disabled
                     required
                   />
                 </div>
               </div>
               <div style={s.btnRow}>
-                <button type="submit" style={s.btnPrimary} disabled={isSubmitting}>
+                <button 
+                  type="submit" 
+                  style={!formLancer.of_id ? s.btnDisabled : s.btnPrimary} 
+                  disabled={isSubmitting || !formLancer.of_id}
+                >
                   {isSubmitting ? "⏳ Lancement..." : "🚀 Lancer le Pipeline"}
                 </button>
               </div>
