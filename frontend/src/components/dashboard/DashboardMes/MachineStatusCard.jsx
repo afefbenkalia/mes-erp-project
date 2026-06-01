@@ -1,17 +1,17 @@
 import React from "react";
 
 const STATUS_CONFIG = {
-  RUNNING: { color: "bg-emerald-500", label: "Running", dotColor: "bg-emerald-400" },
-  OFF: { color: "bg-slate-400", label: "Off", dotColor: "bg-slate-300" },
-  ERROR: { color: "bg-red-500", label: "Error", dotColor: "bg-red-400" },
-  PAUSED: { color: "bg-amber-500", label: "Paused", dotColor: "bg-amber-400" },
+  RUNNING: { color: "bg-emerald-500", label: "En marche", dotColor: "bg-emerald-400" },
+  OFF: { color: "bg-slate-400", label: "Éteint", dotColor: "bg-slate-300" },
+  ERROR: { color: "bg-red-500", label: "Erreur", dotColor: "bg-red-400" },
+  PAUSED: { color: "bg-amber-500", label: "En pause", dotColor: "bg-amber-400" },
 };
 
 export default function MachineStatusCard({ machines = [] }) {
   if (machines.length === 0) {
     return (
       <div className="flex items-center justify-center h-48">
-        <p className="text-sm text-slate-500">No machines configured</p>
+        <p className="text-sm text-slate-500">Aucune machine configurée</p>
       </div>
     );
   }

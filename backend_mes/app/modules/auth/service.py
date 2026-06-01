@@ -2,7 +2,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
-from .model import User
+from .model import User, Notification
 from .schema import UserCreateByAdmin, UserUpdateByAdmin, ChangePasswordRequest
 from app.core.security import (
     hash_password,
@@ -121,12 +121,12 @@ def authenticate(db: Session, email: str, password: str) -> User | None:
     user = get_user_by_email(db, email)
     if not user:
         return None
-    
-    if not user.is_active:
-        return None
-    
+
     if not verify_password(password, user.hashed_password):
         return None
+
+    if not user.is_active:
+        raise ValueError("compte_inactif")
     
     # Update login activity metrics
     now = datetime.utcnow()
@@ -267,6 +267,45 @@ def reset_user_password_by_admin(db: Session, user_id: int) -> User | None:
     except Exception:
         db.rollback()
         raise
+
+
+def create_notification(
+    db: Session,
+    type: str,
+    title: str,
+    target_role: str,
+    payload: dict = None,
+) -> Notification:
+    notif = Notification(
+        type=type,
+        title=title,
+        target_role=target_role,
+        payload=payload,
+    )
+    db.add(notif)
+    db.commit()
+    db.refresh(notif)
+    logger.info(f"Notification created: type={type} target_role={target_role}")
+    return notif
+
+
+def get_unread_notifications(db: Session, target_role: str) -> list:
+    return (
+        db.query(Notification)
+        .filter(Notification.target_role == target_role, Notification.is_read == False)  # noqa: E712
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+
+def mark_all_notifications_read(db: Session, target_role: str) -> None:
+    db.query(Notification).filter(
+        Notification.target_role == target_role,
+        Notification.is_read == False,  # noqa: E712
+    ).update({"is_read": True})
+    db.commit()
+    logger.info(f"Notifications marked as read for role={target_role}")
 
 
 def get_user_stats(db: Session) -> dict:

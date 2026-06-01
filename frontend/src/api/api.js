@@ -135,4 +135,10 @@ export const reportsAPI = {
   getTraceability: (from, to)   => API.get(`/api/reports/traceability?date_from=${from}&date_to=${to}`),
 };
 
+export const authAPI = {
+  forgotPassword:        (email) => API.post("/auth/forgot-password", { email }),
+  getNotifications:      ()      => API.get("/auth/notifications"),
+  markNotificationsRead: ()      => API.post("/auth/notifications/read"),
+};
+
 export default API;

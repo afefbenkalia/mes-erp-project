@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import API from "../api/api";
-import { AlertCircle } from "lucide-react";
+import { authAPI } from "../api/api";
+import { AlertCircle, CheckCircle, X } from "lucide-react";
 import logo from "../assets/logo_sitex.jpg";
 
 const NAVY      = "#1a2c4e";
@@ -268,6 +269,46 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [focusedField, setFocusedField] = useState(null);
 
+  const [forgotOpen,        setForgotOpen]        = useState(false);
+  const [forgotEmail,       setForgotEmail]        = useState("");
+  const [forgotLoading,     setForgotLoading]      = useState(false);
+  const [forgotError,       setForgotError]        = useState("");
+  const [forgotSuccess,     setForgotSuccess]      = useState(false);
+  const [forgotEmailFocused, setForgotEmailFocused] = useState(false);
+
+  const openForgot = () => {
+    setForgotOpen(true);
+    setForgotEmail("");
+    setForgotError("");
+    setForgotSuccess(false);
+  };
+
+  const closeForgot = () => {
+    setForgotOpen(false);
+    setForgotEmail("");
+    setForgotError("");
+    setForgotSuccess(false);
+  };
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    setForgotError("");
+    const trimmed = forgotEmail.trim();
+    if (!trimmed) {
+      setForgotError("Veuillez saisir votre adresse e-mail.");
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      await authAPI.forgotPassword(trimmed);
+      setForgotSuccess(true);
+    } catch {
+      setForgotError("Une erreur est survenue. Veuillez réessayer.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     setError("");
@@ -276,7 +317,7 @@ const Login = () => {
     const trimmedPassword = password.trim();
 
     if (!trimmedEmail || !trimmedPassword) {
-      setError("Please enter email and password");
+      setError("Veuillez saisir l'email et le mot de passe");
       return;
     }
 
@@ -298,12 +339,14 @@ const Login = () => {
       }
     } catch (err) {
       const status   = err.response?.status;
-      const errorMsg = err.response?.data?.detail || "Login failed";
+      const detail   = err.response?.data?.detail || "";
 
-      if (status === 401) {
-        setError("Invalid email or password");
+      if (status === 403 && detail === "compte_inactif") {
+        setError("Votre compte est inactif. Veuillez contacter l'administrateur.");
+      } else if (status === 401) {
+        setError("Email ou mot de passe invalide");
       } else {
-        setError(errorMsg);
+        setError(detail || "Échec de la connexion");
       }
     } finally {
       setLoading(false);
@@ -414,6 +457,25 @@ const Login = () => {
               </div>
             </div>
 
+            {/* Mot de passe oublié */}
+            <div style={{ textAlign: "right", marginTop: "-12px", marginBottom: "8px" }}>
+              <button
+                type="button"
+                onClick={openForgot}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: ACCENT,
+                  fontSize: "13px",
+                  cursor: "pointer",
+                  padding: 0,
+                  textDecoration: "underline",
+                }}
+              >
+                Mot de passe oublié ?
+              </button>
+            </div>
+
             {/* Error */}
             {error && (
               <div style={styles.errorBox}>
@@ -442,15 +504,138 @@ const Login = () => {
             </button>
           </form>
 
-          {/* Info */}
-          <div style={styles.infoBox}>
-            <p style={styles.infoTitle}>Première connexion ?</p>
-            <p>Un administrateur créera votre compte et vous enverra un mot de passe temporaire par e-mail. Vous devrez le changer lors de votre première connexion.</p>
-          </div>
-
-          <div style={styles.footer}>© 2026 MES System. All rights reserved.</div>
+          <div style={styles.footer}>© 2026 MES System. Tous droits réservés.</div>
         </div>
       </div>
+
+      {/* ── Modal mot de passe oublié ── */}
+      {forgotOpen && (
+        <div style={{
+          position: "fixed", inset: 0, zIndex: 9999,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: "rgba(15,23,42,0.55)", padding: "16px",
+        }}>
+          <div style={{
+            background: WHITE, borderRadius: "20px", padding: "36px 32px",
+            width: "100%", maxWidth: "420px",
+            boxShadow: "0 24px 48px rgba(26,44,78,0.18)",
+            border: `1px solid ${BORDER}`, animation: "fadeSlideIn 0.25s ease-out",
+            position: "relative",
+          }}>
+            {/* Fermer */}
+            <button
+              type="button"
+              onClick={closeForgot}
+              style={{
+                position: "absolute", top: "14px", right: "14px",
+                background: "none", border: "none", cursor: "pointer",
+                color: MUTED, padding: "4px", borderRadius: "6px",
+                display: "flex", alignItems: "center",
+              }}
+              aria-label="Fermer"
+            >
+              <X size={18} />
+            </button>
+
+            <h3 style={{ margin: "0 0 6px", fontSize: "20px", fontWeight: 700, color: NAVY }}>
+              Mot de passe oublié ?
+            </h3>
+            <p style={{ margin: "0 0 24px", fontSize: "13px", color: MUTED, lineHeight: 1.5 }}>
+              Saisissez votre adresse e-mail. Un administrateur sera notifié et réinitialisera votre mot de passe.
+            </p>
+
+            {forgotSuccess ? (
+              <div style={{
+                display: "flex", alignItems: "flex-start", gap: "10px",
+                padding: "14px 16px", borderRadius: "12px",
+                background: "#f0fdf4", border: "1px solid #bbf7d0", color: "#15803d",
+                fontSize: "14px", fontWeight: 500,
+              }}>
+                <CheckCircle size={18} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span>
+                  Votre demande a été transmise. L'administrateur vous contactera pour réinitialiser votre mot de passe.
+                </span>
+              </div>
+            ) : (
+              <form onSubmit={handleForgotPassword}>
+                {forgotError && (
+                  <div style={{
+                    display: "flex", alignItems: "flex-start", gap: "10px",
+                    padding: "12px 14px", marginBottom: "16px", borderRadius: "10px",
+                    background: "#fef2f2", border: "1px solid #fecaca",
+                    color: ERROR_CLR, fontSize: "13px", fontWeight: 500,
+                  }}>
+                    <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>{forgotError}</span>
+                  </div>
+                )}
+
+                <label style={{ ...styles.label, fontSize: "13px" }}>Adresse e-mail</label>
+                <input
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  onFocus={() => setForgotEmailFocused(true)}
+                  onBlur={() => setForgotEmailFocused(false)}
+                  placeholder="votre@email.com"
+                  disabled={forgotLoading}
+                  style={{
+                    ...styles.input,
+                    marginBottom: "20px",
+                    ...(forgotEmailFocused ? styles.inputFocused : {}),
+                  }}
+                />
+
+                <div style={{ display: "flex", gap: "10px" }}>
+                  <button
+                    type="submit"
+                    disabled={forgotLoading}
+                    style={{
+                      flex: 1, padding: "13px",
+                      background: forgotLoading
+                        ? "#94a3b8"
+                        : `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_LIGHT} 100%)`,
+                      color: WHITE, border: "none", borderRadius: "12px",
+                      fontSize: "14px", fontWeight: 600, cursor: forgotLoading ? "not-allowed" : "pointer",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    {forgotLoading ? "Envoi en cours..." : "Envoyer la demande"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeForgot}
+                    style={{
+                      flex: 1, padding: "13px",
+                      background: OFFWHITE, color: NAVY,
+                      border: `1px solid ${BORDER}`, borderRadius: "12px",
+                      fontSize: "14px", fontWeight: 600, cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                  >
+                    Annuler
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {forgotSuccess && (
+              <button
+                type="button"
+                onClick={closeForgot}
+                style={{
+                  marginTop: "20px", width: "100%", padding: "13px",
+                  background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_LIGHT} 100%)`,
+                  color: WHITE, border: "none", borderRadius: "12px",
+                  fontSize: "14px", fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Fermer
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <style>{`
         @keyframes fadeSlideIn {

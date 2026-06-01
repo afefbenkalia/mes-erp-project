@@ -33,6 +33,7 @@ import MaintenanceDashboard   from "./maintenance/MaintenanceDashboard";
 import Operateur              from "./operateur/Operateur";
 import ReportsDashboard       from "./reports/ReportsDashboard";
 import { subscribeMaintenanceEvents } from "../services/maintenanceSocket";
+import { authAPI } from "../api/api";
 
 /* ─────────────────────────────────────────
    ROLE / MODULE CONFIGURATION
@@ -107,6 +108,7 @@ const EVENT_DOT_COLORS = {
   MAINTENANCE: "#f59e0b",
   MARCHE:      "#22c55e",
   PAUSE:       "#94a3b8",
+  RESET:       "#8b5cf6",
 };
 const getNotifDot = (payload) => {
   if (payload?.state) return EVENT_DOT_COLORS[payload.state] || "#3b82f6";
@@ -131,7 +133,9 @@ export default function MESDashboard() {
   const [notifOpen,     setNotifOpen]    = useState(false);
   const [notifs,        setNotifs]       = useState([]);
   const [notifTick,     setNotifTick]    = useState(0);
-  const notifIdRef = useRef(0);
+  const notifIdRef      = useRef(0);
+  const userRoleRef     = useRef(null);
+  const seenNotifKeys   = useRef(new Set());
 
   const notifRef = useRef(null);
 
@@ -146,7 +150,7 @@ export default function MESDashboard() {
     return () => clearInterval(id);
   }, []);
 
-  /* ── WebSocket → live notifications ── */
+  /* ── Notification push helpers ── */
   const pushNotif = useCallback((title, payload) => {
     notifIdRef.current += 1;
     const entry = {
@@ -158,24 +162,59 @@ export default function MESDashboard() {
     setNotifs((prev) => [entry, ...prev].slice(0, MAX_NOTIFS));
   }, []);
 
+  // Déduplication DB + WS : même demande ne s'affiche qu'une fois
+  const pushNotifDeduped = useCallback((title, payload) => {
+    if (payload?.user_email && payload?.timestamp) {
+      const key = `${payload.user_email}-${payload.timestamp}`;
+      if (seenNotifKeys.current.has(key)) return;
+      seenNotifKeys.current.add(key);
+    }
+    pushNotif(title, payload);
+  }, [pushNotif]);
+
+  // Chargement des notifications non lues depuis la DB (admin uniquement)
+  const loadDbNotifications = useCallback(async (role) => {
+    if (role !== "admin") return;
+    try {
+      const res = await authAPI.getNotifications();
+      const dbNotifs = res.data || [];
+      dbNotifs.forEach((n) => {
+        pushNotifDeduped(n.title, { ...(n.payload || {}), state: "RESET" });
+      });
+    } catch {
+      // silencieux — ne bloque pas le dashboard
+    }
+  }, [pushNotifDeduped]);
+
   useEffect(() => {
     const unsubscribe = subscribeMaintenanceEvents({
       onStatusChange: () => {},
       onMessage: (message) => {
         if (!message || !message.event) return;
-        const p = message.payload || {};
-        if (message.event === "notification") {
-          pushNotif(p.message || "Notification maintenance", p);
-        } else if (message.event === "intervention_completed") {
-          pushNotif(
-            `Intervention clôturée — ${p.machine_reference || "Machine"}`,
-            { ...p, state: "MARCHE" },
-          );
-        } else if (message.event === "machine_repaired") {
-          pushNotif(
-            p.message || `Machine ${p.machine_reference || ""} réparée`,
-            { ...p, state: "PAUSE" },
-          );
+        const p    = message.payload || {};
+        const role = userRoleRef.current;
+
+        if (message.event === "forgot_password_request") {
+          if (role === "admin") {
+            pushNotifDeduped(
+              `🔐 ${p.user_prenom} ${p.user_nom} — mot de passe oublié`,
+              { ...p, state: "RESET" },
+            );
+          }
+        } else if (role !== "admin") {
+          if (message.event === "notification") {
+            pushNotif(p.message || "Notification maintenance", p);
+          } else if (message.event === "intervention_completed") {
+            pushNotif(
+              `Intervention clôturée — ${p.machine_reference || "Machine"}`,
+              { ...p, state: "MARCHE" },
+            );
+          } else if (message.event === "machine_repaired") {
+            pushNotif(
+              p.message || `Machine ${p.machine_reference || ""} réparée`,
+              { ...p, state: "PAUSE" },
+            );
+          }
         }
       },
     });
@@ -194,10 +233,12 @@ export default function MESDashboard() {
     const stored = JSON.parse(localStorage.getItem("user"));
     if (!stored) { window.location.href = "/login"; return; }
     setUser(stored);
+    userRoleRef.current = stored.role;
     const key    = ROLE_TO_CONFIG_KEY[stored.role] || stored.role;
     const config = ROLE_CONFIG[key];
     setActiveModule(config?.defaultModule || "dashboard");
-  }, []);
+    loadDbNotifications(stored.role);
+  }, [loadDbNotifications]);
 
   if (!user) return null;
 
@@ -208,7 +249,12 @@ export default function MESDashboard() {
   const roleColor  = ROLE_COLORS[role]  || ROLE_COLORS.manager;
 
   const handleLogout   = () => { localStorage.clear(); window.location.href = "/login"; };
-  const clearAllNotifs = () => { setNotifs([]); setNotifOpen(false); };
+  const clearAllNotifs = () => {
+    setNotifs([]);
+    setNotifOpen(false);
+    seenNotifKeys.current.clear();
+    authAPI.markNotificationsRead().catch(() => {});
+  };
 
   const menu = (roleConfig?.modules || []).map((id) => ({
     id,
@@ -529,9 +575,8 @@ export default function MESDashboard() {
               </span>
             </div>
 
-            {/* Notification bell (hidden for admin role) */}
-            {role !== "admin" && (
-              <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
+            {/* Notification bell */}
+            <div ref={notifRef} style={{ position: "relative", padding: "0 6px" }}>
               <button
                 onClick={() => setNotifOpen(o => !o)}
                 title="Notifications"
@@ -671,7 +716,6 @@ export default function MESDashboard() {
                 </div>
               )}
               </div>
-            )}
 
             <VDivider />
 

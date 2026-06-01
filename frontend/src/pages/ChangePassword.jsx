@@ -52,34 +52,34 @@ const ChangePassword = () => {
 
     // Validation
     if (!currentPassword.trim()) {
-      setError("Current password is required");
+      setError("Le mot de passe actuel est requis");
       return;
     }
 
     if (!newPassword.trim()) {
-      setError("New password is required");
+      setError("Le nouveau mot de passe est requis");
       return;
     }
 
     if (!confirmPassword.trim()) {
-      setError("Password confirmation is required");
+      setError("La confirmation du mot de passe est requise");
       return;
     }
 
     if (!passwordValidation.isValid) {
       setError(
-        "Password must be at least 8 characters with uppercase, lowercase, and digits"
+        "Le mot de passe doit comporter au moins 8 caractères avec majuscule, minuscule et chiffre"
       );
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setError("Passwords do not match");
+      setError("Les mots de passe ne correspondent pas");
       return;
     }
 
     if (currentPassword === newPassword) {
-      setError("New password must be different from current password");
+      setError("Le nouveau mot de passe doit être différent de l'actuel");
       return;
     }
 
@@ -110,7 +110,7 @@ const ChangePassword = () => {
       }, 2000);
     } catch (err) {
       const errorMsg =
-        err.response?.data?.detail || err.response?.data?.message || "Failed to change password";
+        err.response?.data?.detail || err.response?.data?.message || "Échec du changement de mot de passe";
       setError(errorMsg);
     } finally {
       setLoading(false);
@@ -128,18 +128,18 @@ const ChangePassword = () => {
         </div>
 
         {/* Title */}
-        <h2 className="text-2xl font-bold text-center mb-2">Change Password</h2>
+        <h2 className="text-2xl font-bold text-center mb-2">Changer le mot de passe</h2>
         <p className="text-gray-400 text-center mb-6">
-          Please set a new password to continue
+          Veuillez définir un nouveau mot de passe pour continuer
         </p>
 
         {/* User Info */}
         <div className="bg-gray-800 p-3 rounded-lg mb-6 text-sm">
           <p className="text-gray-300">
-            <span className="text-gray-400">User:</span> {user.prenom} {user.nom}
+            <span className="text-gray-400">Utilisateur :</span> {user.prenom} {user.nom}
           </p>
           <p className="text-gray-300">
-            <span className="text-gray-400">Email:</span> {user.email}
+            <span className="text-gray-400">Email :</span> {user.email}
           </p>
         </div>
 
@@ -147,7 +147,7 @@ const ChangePassword = () => {
         {success && (
           <div className="bg-green-900 border border-green-700 text-green-200 p-4 rounded-lg mb-6 flex items-center gap-2">
             <CheckCircle size={20} />
-            <span>Password changed successfully! Redirecting...</span>
+            <span>Mot de passe modifié avec succès ! Redirection en cours...</span>
           </div>
         )}
 
@@ -164,14 +164,14 @@ const ChangePassword = () => {
           {/* Current Password */}
           <div>
             <label className="block text-gray-300 text-sm font-semibold mb-2">
-              Current Password *
+              Mot de passe actuel *
             </label>
             <div className="relative">
               <input
                 type={showCurrentPassword ? "text" : "password"}
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                placeholder="Enter your current password"
+                placeholder="Saisissez votre mot de passe actuel"
                 className="w-full bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none transition"
                 disabled={loading}
               />
@@ -189,14 +189,14 @@ const ChangePassword = () => {
           {/* New Password */}
           <div>
             <label className="block text-gray-300 text-sm font-semibold mb-2">
-              New Password *
+              Nouveau mot de passe *
             </label>
             <div className="relative">
               <input
                 type={showNewPassword ? "text" : "password"}
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                placeholder="Enter new password"
+                placeholder="Saisissez votre nouveau mot de passe"
                 className="w-full bg-gray-800 text-white px-4 py-2 rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none transition"
                 disabled={loading}
               />
@@ -227,7 +227,7 @@ const ChangePassword = () => {
                         : "border-gray-600"
                     }`}
                   />
-                  At least 8 characters
+                  Au moins 8 caractères
                 </div>
                 <div
                   className={`flex items-center gap-2 ${
@@ -243,7 +243,7 @@ const ChangePassword = () => {
                         : "border-gray-600"
                     }`}
                   />
-                  Uppercase letter
+                  Une lettre majuscule
                 </div>
                 <div
                   className={`flex items-center gap-2 ${
@@ -259,7 +259,7 @@ const ChangePassword = () => {
                         : "border-gray-600"
                     }`}
                   />
-                  Lowercase letter
+                  Une lettre minuscule
                 </div>
                 <div
                   className={`flex items-center gap-2 ${
@@ -275,7 +275,7 @@ const ChangePassword = () => {
                         : "border-gray-600"
                     }`}
                   />
-                  Digit
+                  Un chiffre
                 </div>
               </div>
             )}
@@ -284,14 +284,14 @@ const ChangePassword = () => {
           {/* Confirm Password */}
           <div>
             <label className="block text-gray-300 text-sm font-semibold mb-2">
-              Confirm Password *
+              Confirmer le mot de passe *
             </label>
             <div className="relative">
               <input
                 type={showConfirmPassword ? "text" : "password"}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                placeholder="Re-enter new password"
+                placeholder="Ressaisissez votre nouveau mot de passe"
                 className={`w-full bg-gray-800 text-white px-4 py-2 rounded-lg border transition focus:outline-none ${
                   confirmPassword && newPassword !== confirmPassword
                     ? "border-red-500 focus:border-red-500"
@@ -309,7 +309,7 @@ const ChangePassword = () => {
               </button>
             </div>
             {confirmPassword && newPassword !== confirmPassword && (
-              <p className="text-red-400 text-sm mt-1">Passwords do not match</p>
+              <p className="text-red-400 text-sm mt-1">Les mots de passe ne correspondent pas</p>
             )}
           </div>
 
@@ -323,13 +323,13 @@ const ChangePassword = () => {
                 : "bg-blue-600 hover:bg-blue-700 text-white"
             }`}
           >
-            {loading ? "Changing Password..." : "Change Password"}
+            {loading ? "Modification en cours..." : "Changer le mot de passe"}
           </button>
         </form>
 
         {/* Footer */}
         <p className="text-gray-400 text-center text-sm mt-6">
-          Password must be at least 8 characters with uppercase, lowercase, and digits
+          Le mot de passe doit comporter au moins 8 caractères avec majuscule, minuscule et chiffre
         </p>
       </div>
     </div>

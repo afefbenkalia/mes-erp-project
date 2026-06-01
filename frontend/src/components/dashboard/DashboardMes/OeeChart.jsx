@@ -9,22 +9,18 @@ import {
 } from "recharts";
 
 const SLICE_COLORS = {
-  Availability: "#0d9488",
+  Disponibilité: "#0d9488",
   Performance: "#2563eb",
-  Quality: "#a855f7",
+  Qualité: "#a855f7",
 };
 
 const defaultBreakdown = { availability: 0, performance: 0, quality: 0 };
 
-/**
- * Doughnut chart for OEE component scores (each is a %; slice size reflects relative weight).
- * @param {{ breakdown?: { availability: number; performance: number; quality: number } }} props
- */
 export default function OeeChart({ breakdown = defaultBreakdown }) {
   const data = [
-    { name: "Availability", value: Math.max(0, breakdown.availability) },
+    { name: "Disponibilité", value: Math.max(0, breakdown.availability) },
     { name: "Performance", value: Math.max(0, breakdown.performance) },
-    { name: "Quality", value: Math.max(0, breakdown.quality) },
+    { name: "Qualité", value: Math.max(0, breakdown.quality) },
   ];
 
   return (

@@ -321,8 +321,8 @@ const Machine = () => {
     const avgRuntime  = count > 0 ? Math.round(totalRuntime  / count) : 0;
     const avgDowntime = count > 0 ? Math.round(totalDowntime / count) : 0;
     return [
-      { name: "Runtime",  minutes: avgRuntime,  label: formatLabel(avgRuntime) },
-      { name: "Downtime", minutes: avgDowntime, label: formatLabel(avgDowntime) },
+      { name: "Temps de marche", minutes: avgRuntime,  label: formatLabel(avgRuntime) },
+      { name: "Temps d'arrêt",  minutes: avgDowntime, label: formatLabel(avgDowntime) },
     ];
   };
 
@@ -571,14 +571,14 @@ const Machine = () => {
           title="Disponibilité moyenne"
           value={displayPerformance}
           suffix={dbAvailPct !== null ? "%" : undefined}
-          subtitle="Runtime / (Runtime + Downtime) — depuis 00:00"
+          subtitle="Temps de marche / (Temps de marche + Temps d'arrêt) — depuis 00:00"
           icon={Activity}
           iconClassName="bg-blue-50 text-blue-700"
         />
         <KpiCard
-          title="Runtime moyen / machine"
+          title="Temps de marche moyen / machine"
           value={displayRuntime}
-          subtitle="Durée moyenne de MARCHE par machine — depuis 00:00"
+          subtitle="Durée moyenne de marche par machine — depuis 00:00"
           icon={BarChart3}
           iconClassName="bg-emerald-50 text-emerald-700"
         />
@@ -634,18 +634,18 @@ const Machine = () => {
         {/* Bar — Runtime vs Downtime ✅ depuis DB state_history */}
         <article className="rounded-xl border border-slate-200/80 bg-white p-6 shadow-sm shadow-slate-200/50">
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-base font-semibold text-slate-900">Runtime vs Downtime — moyenne par machine (depuis 00:00)</h2>
+            <h2 className="text-base font-semibold text-slate-900">Temps de marche vs Temps d'arrêt — moyenne par machine (depuis 00:00)</h2>
             <BarChart3 className="h-4 w-4 text-slate-400" aria-hidden />
           </div>
 
           {/* Affiche les totaux en clair sous le titre */}
           <div className="mb-3 flex gap-4 text-xs text-slate-500">
             <span>
-              <span className="font-semibold text-emerald-600">Runtime : </span>
+              <span className="font-semibold text-emerald-600">Temps de marche : </span>
               {runtimeBarData[0]?.label ?? "—"}
             </span>
             <span>
-              <span className="font-semibold text-red-500">Downtime : </span>
+              <span className="font-semibold text-red-500">Temps d'arrêt : </span>
               {runtimeBarData[1]?.label ?? "—"}
             </span>
           </div>
@@ -697,7 +697,7 @@ const Machine = () => {
                     <Cell
                       key={entry.name}
                       fill={
-                        entry.name === "Runtime"
+                        entry.name === "Temps de marche"
                           ? STATE_COLORS.MARCHE
                           : STATE_COLORS.PAUSE
                       }
@@ -743,7 +743,7 @@ const Machine = () => {
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
-                  formatter={(v) => [`${v}%`, "Performance"]}
+                  formatter={(v) => [`${v}%`, "Disponibilité (%)"]}
                   contentStyle={{
                     borderRadius: "10px",
                     border: "1px solid #e2e8f0",

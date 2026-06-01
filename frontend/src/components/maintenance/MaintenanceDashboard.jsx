@@ -30,8 +30,9 @@ import {
   WifiOff,
 } from "lucide-react";
 
-import { maintenanceAPI } from "../../api/api";
+import { maintenanceAPI, machineAPI } from "../../api/api";
 import { subscribeMaintenanceEvents } from "../../services/maintenanceSocket";
+import { subscribeMachineRealtime } from "../../services/telemetrySocket";
 
 /* ─────────────────────────── constants ──────────────────────────── */
 
@@ -115,7 +116,8 @@ const toDatetimeLocalValue = (isoString) => {
   return local.toISOString().slice(0, 16);
 };
 
-const normalizeText   = (value)           => (value || "").toString().trim().toLowerCase();
+const normalizeKey  = (value) => String(value ?? "").trim().toUpperCase();
+const normalizeText = (value) => (value || "").toString().trim().toLowerCase();
 const isAfterDate     = (value, dateFrom) => {
   if (!value || !dateFrom) return true;
   const target = new Date(value);
@@ -268,6 +270,9 @@ export default function MaintenanceDashboard({ activeTab = "dashboard" }) {
   const [preventiveFilters,  setPreventiveFilters]  = useState({ machine: "ALL", status: "ALL", trigger: "ALL", dateFrom: "" });
   const [wsStatus,           setWsStatus]           = useState("disconnected");
   const [loading,            setLoading]            = useState(true);
+  const [runtimeStats,       setRuntimeStats]       = useState({});
+  const [realtimeByMachineId,setRealtimeByMachineId]= useState({});
+  const [machineTypeMap,     setMachineTypeMap]     = useState({});
   const [preventiveForm,     setPreventiveForm]     = useState({
     machine_id: "", maintenance_type: "", trigger_mode: "SCHEDULED", planned_date: "", runtime_threshold_minutes: "",
   });
@@ -304,6 +309,41 @@ export default function MaintenanceDashboard({ activeTab = "dashboard" }) {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  /* ── runtime stats + machine types (toutes les 60 s) ── */
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [rtRes, fullRes] = await Promise.all([
+          machineAPI.getRuntimeStats(),
+          machineAPI.getMachines({ include_current_state: false }),
+        ]);
+        setRuntimeStats(rtRes.data || {});
+        const map = {};
+        (fullRes.data || []).forEach((m) => { map[m.id] = m.machine_type || "—"; });
+        setMachineTypeMap(map);
+      } catch { /* silent */ }
+    };
+    load();
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /* ── MQTT temps réel (température, pression, vitesse) ── */
+  useEffect(() => {
+    const unsubscribe = subscribeMachineRealtime({
+      onConnectionChange: () => {},
+      onMessage: (payload) => {
+        if (!payload?.machineId) return;
+        const key = normalizeKey(payload.machineId);
+        setRealtimeByMachineId((prev) => ({
+          ...prev,
+          [key]: { ...payload, machineId: key, lastUpdate: new Date().toISOString() },
+        }));
+      },
+    });
+    return unsubscribe;
+  }, []);
 
   /* ── websocket ── */
   useEffect(() => {
@@ -562,80 +602,167 @@ export default function MaintenanceDashboard({ activeTab = "dashboard" }) {
         />
       </section>
 
-      {/* Machine table */}
-      <section className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-        <div className="px-5 py-4">
-          <SectionHeader
-            eyebrow="Supervision temps réel"
-            title="État des machines"
-            description="Vue consolidée des états machine avec lecture immédiate des anomalies."
-            aside={
-              <>
-                <Pill color="slate">{kpis.total} machines</Pill>
-                <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${wsStatus === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-                  {wsStatus === "connected"
-                    ? <><span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /><Wifi className="h-3 w-3" /> Temps réel</>
-                    : <><WifiOff className="h-3 w-3" /> Déconnecté</>}
-                </span>
-                <span className="text-xs text-slate-400">{dashboardMachines.length}/{machines.length}</span>
-              </>
-            }
-          />
-        </div>
+      {/* Machine table — détaillée */}
+      {(() => {
+        const getRT = (m) => {
+          const keys = [
+            normalizeKey(m.machine_reference),
+            normalizeKey(m.machine_id),
+            normalizeKey(m.machine_name),
+          ];
+          return Object.values(realtimeByMachineId).find(
+            (rt) => keys.includes(normalizeKey(rt?.machineId))
+          ) || null;
+        };
 
-        <div className="px-5 pb-2">
-          <FilterBar
-            filters={dashboardFilters}
-            onFilterChange={updateDashboardFilter}
-            fields={[
-              { type: "search", name: "query", placeholder: "Référence ou nom..." },
-              { type: "select", name: "status", options: [
-                { value: "ALL",         label: "Tous les statuts" },
-                { value: "MARCHE",      label: "En marche" },
-                { value: "ERREUR",      label: "En erreur" },
-                { value: "MAINTENANCE", label: "En maintenance" },
-                { value: "PAUSE",       label: "En pause" },
-              ]},
-              { type: "date", name: "dateFrom" },
-            ]}
-          />
-        </div>
+        const fmtRuntime = (mins) => {
+          const n = Number(mins);
+          if (!Number.isFinite(n) || n < 0) return "—";
+          const t = Math.round(n);
+          const h = Math.floor(t / 60);
+          const m = t % 60;
+          return h > 0 ? `${h}h ${m}min` : `${m} min`;
+        };
 
-        <div className="overflow-x-auto">
-          <table className="min-w-full border-separate border-spacing-0 text-sm">
-            <TableHead cols={["Machine", "État", "Dernière mise à jour"]} />
-            <tbody>
-              {dashboardMachines.map((m, i) => (
-                <tr key={m.machine_id} className={`transition hover:bg-slate-50/80 ${i % 2 === 0 ? "" : "bg-slate-50/30"}`}>
-                  <td className="border-b border-slate-50 px-4 py-3.5">
-                    <div className="flex items-center gap-3">
-                      <div className={`h-8 w-8 shrink-0 rounded-lg flex items-center justify-center text-xs font-bold ${STATE_STYLES[m.state] || "bg-slate-100 text-slate-600"}`}>
-                        {m.machine_reference.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div>
-                        <p className="font-semibold text-slate-800">{m.machine_reference}</p>
-                        <p className="text-xs text-slate-400">{m.machine_name}</p>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="border-b border-slate-50 px-4 py-3.5">
-                    <StateBadge state={m.state} />
-                  </td>
-                  <td className="border-b border-slate-50 px-4 py-3.5 text-xs text-slate-500">
-                    <span className="inline-flex items-center gap-1.5">
-                      <Clock3 className="h-3 w-3 text-slate-300" />
-                      {formatDate(m.last_update)}
+        const fmtSensor = (val, suffix = "") => {
+          if (val === null || val === undefined || val === "") return "—";
+          const n = Number(val);
+          return Number.isFinite(n) ? `${n}${suffix}` : "—";
+        };
+
+        return (
+          <section className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <div className="px-5 py-4">
+              <SectionHeader
+                eyebrow="Supervision temps réel"
+                title="État des machines"
+                description="Vue détaillée — états, temps de fonctionnement et capteurs en temps réel."
+                aside={
+                  <>
+                    <Pill color="slate">{kpis.total} machines</Pill>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${wsStatus === "connected" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                      {wsStatus === "connected"
+                        ? <><span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" /><Wifi className="h-3 w-3" /> Temps réel</>
+                        : <><WifiOff className="h-3 w-3" /> Déconnecté</>}
                     </span>
-                  </td>
-                </tr>
-              ))}
-              {!loading && dashboardMachines.length === 0 && (
-                <EmptyState colSpan={3} icon={BarChart3} title="Aucune machine ne correspond" description="Ajustez les filtres pour afficher des résultats." />
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                    <span className="text-xs text-slate-400">{dashboardMachines.length}/{machines.length}</span>
+                  </>
+                }
+              />
+            </div>
+
+            <div className="px-5 pb-2">
+              <FilterBar
+                filters={dashboardFilters}
+                onFilterChange={updateDashboardFilter}
+                fields={[
+                  { type: "search", name: "query", placeholder: "Référence ou nom…" },
+                  { type: "select", name: "status", options: [
+                    { value: "ALL",         label: "Tous les statuts" },
+                    { value: "MARCHE",      label: "En marche" },
+                    { value: "ERREUR",      label: "En erreur" },
+                    { value: "MAINTENANCE", label: "En maintenance" },
+                    { value: "PAUSE",       label: "En pause" },
+                  ]},
+                ]}
+              />
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full border-separate border-spacing-0 text-sm">
+                <thead>
+                  <tr className="bg-slate-50/80">
+                    {["Nom", "Référence", "Type", "État",
+                      "Tps de marche", "Tps d'arrêt",
+                      "Température", "Pression", "Vitesse"].map((col) => (
+                      <th key={col}
+                          className="border-b border-slate-100 px-4 py-3 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 first:rounded-tl-xl last:rounded-tr-xl whitespace-nowrap">
+                        {col}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {dashboardMachines.map((m, i) => {
+                    const rt      = getRT(m);
+                    const stats   = runtimeStats[m.machine_id] ?? runtimeStats[String(m.machine_id)];
+                    const type    = machineTypeMap[m.machine_id] || "—";
+
+                    return (
+                      <tr key={m.machine_id}
+                          className={`transition hover:bg-slate-50/80 ${i % 2 === 0 ? "" : "bg-slate-50/30"}`}>
+
+                        {/* Nom */}
+                        <td className="border-b border-slate-50 px-4 py-3.5">
+                          <p className="font-semibold text-slate-800 whitespace-nowrap">
+                            {m.machine_name || "—"}
+                          </p>
+                        </td>
+
+                        {/* Référence */}
+                        <td className="border-b border-slate-50 px-4 py-3.5">
+                          <div className="flex items-center gap-2">
+                            <div className={`h-7 w-7 shrink-0 rounded-lg flex items-center justify-center text-[10px] font-bold ${STATE_STYLES[m.state] || "bg-slate-100 text-slate-600"}`}>
+                              {(m.machine_reference || "??").slice(0, 2).toUpperCase()}
+                            </div>
+                            <span className="font-mono text-xs font-semibold text-slate-700 whitespace-nowrap">
+                              {m.machine_reference}
+                            </span>
+                          </div>
+                        </td>
+
+                        {/* Type */}
+                        <td className="border-b border-slate-50 px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
+                          {type}
+                        </td>
+
+                        {/* État */}
+                        <td className="border-b border-slate-50 px-4 py-3.5">
+                          <StateBadge state={m.state} />
+                        </td>
+
+                        {/* Temps de marche */}
+                        <td className="border-b border-slate-50 px-4 py-3.5">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            {fmtRuntime(stats?.runtime_minutes)}
+                          </span>
+                        </td>
+
+                        {/* Temps d'arrêt */}
+                        <td className="border-b border-slate-50 px-4 py-3.5">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-red-600">
+                            <span className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                            {fmtRuntime(stats?.downtime_minutes)}
+                          </span>
+                        </td>
+
+                        {/* Température */}
+                        <td className="border-b border-slate-50 px-4 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                          {fmtSensor(rt?.temperature, " °C")}
+                        </td>
+
+                        {/* Pression */}
+                        <td className="border-b border-slate-50 px-4 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                          {fmtSensor(rt?.pressure, " bar")}
+                        </td>
+
+                        {/* Vitesse */}
+                        <td className="border-b border-slate-50 px-4 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                          {fmtSensor(rt?.speed)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!loading && dashboardMachines.length === 0 && (
+                    <EmptyState colSpan={9} icon={BarChart3} title="Aucune machine ne correspond" description="Ajustez les filtres pour afficher des résultats." />
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        );
+      })()}
 
       {/* Recent activity */}
       <section className="rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -787,7 +914,7 @@ export default function MaintenanceDashboard({ activeTab = "dashboard" }) {
                   <button
                     type="button"
                     onClick={() => handleTakeOver(machine.machine_id)}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 active:scale-[0.99]"
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-[#1a2c4e] px-4 py-2.5 text-sm font-semibold text-white active:scale-[0.99]"
                   >
                     <Zap className="h-4 w-4" />
                     Prendre en charge

@@ -17,7 +17,7 @@ const STATE_LABEL = {
 
 const formatDurationMinutes = (minutesTotal) => {
   const m = Number(minutesTotal);
-  if (!Number.isFinite(m) || m < 0) return "No Data";
+  if (!Number.isFinite(m) || m < 0) return "N/D";
   const totalMinutes = Math.round(m);
   const hours   = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
@@ -26,14 +26,14 @@ const formatDurationMinutes = (minutesTotal) => {
 };
 
 const formatNumber = (value, suffix = "") => {
-  if (value === null || value === undefined || value === "") return "No Data";
+  if (value === null || value === undefined || value === "") return "N/D";
   const n = Number(value);
-  if (!Number.isFinite(n)) return "No Data";
+  if (!Number.isFinite(n)) return "N/D";
   return `${n}${suffix}`;
 };
 
 const formatLastUpdate = (timestamp) => {
-  if (!timestamp) return "No Data";
+  if (!timestamp) return "N/D";
   return new Date(timestamp).toLocaleTimeString();
 };
 
@@ -90,7 +90,7 @@ const MachineTable = ({
               : "bg-slate-100  text-slate-700  ring-slate-200/80"
           }`}
         >
-          MQTT: {mqttConnectionStatus}
+          MQTT : {mqttConnectionStatus === "connected" ? "connecté" : "déconnecté"}
         </span>
       </div>
 
@@ -98,19 +98,19 @@ const MachineTable = ({
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50/80 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-3">name</th>
-              <th className="px-4 py-3">reference</th>
-              <th className="px-4 py-3">type</th>
-              <th className="px-4 py-3">state</th>
-              <th className="px-4 py-3">runtime</th>
-              <th className="px-4 py-3">downtime</th>
-              <th className="px-4 py-3">production/day</th>
-              <th className="px-4 py-3">rejects/day</th>
-              <th className="px-4 py-3">temperature</th>
-              <th className="px-4 py-3">pressure</th>
-              <th className="px-4 py-3">speed</th>
-              <th className="px-4 py-3">last update</th>
-              <th className="px-4 py-3 text-right">actions</th>
+              <th className="px-4 py-3">Nom</th>
+              <th className="px-4 py-3">Référence</th>
+              <th className="px-4 py-3">Type</th>
+              <th className="px-4 py-3">État</th>
+              <th className="px-4 py-3">Temps de marche</th>
+              <th className="px-4 py-3">Temps d'arrêt</th>
+              <th className="px-4 py-3">Production/jour</th>
+              <th className="px-4 py-3">Rebuts/jour</th>
+              <th className="px-4 py-3">Température</th>
+              <th className="px-4 py-3">Pression</th>
+              <th className="px-4 py-3">Vitesse</th>
+              <th className="px-4 py-3">Dernière MAJ</th>
+              <th className="px-4 py-3 text-right">Actions</th>
             </tr>
           </thead>
 
@@ -157,7 +157,7 @@ const MachineTable = ({
                     </td>
 
                     <td className="px-4 py-3 text-slate-700">
-                      {machine.machine_type || "No Data"}
+                      {machine.machine_type || "N/D"}
                     </td>
 
                     <td className="px-4 py-3">
@@ -171,7 +171,7 @@ const MachineTable = ({
                           {STATE_LABEL[state] || state}
                         </span>
                       ) : (
-                        <span className="text-slate-500">No Data</span>
+                        <span className="text-slate-500">N/D</span>
                       )}
                     </td>
 
@@ -185,24 +185,24 @@ const MachineTable = ({
 
                     {/* production/day — source: etapes_production.qte_sortie */}
                     <td className="px-4 py-3 tabular-nums">
-                      {kpi != null ? formatNumber(kpi.production_per_day) : "No Data"}
+                      {kpi != null ? formatNumber(kpi.production_per_day) : "N/D"}
                     </td>
 
                     {/* rejects/day — source: rebuts.quantite */}
                     <td className="px-4 py-3 tabular-nums">
-                      {kpi != null ? formatNumber(kpi.rejects_per_day) : "No Data"}
+                      {kpi != null ? formatNumber(kpi.rejects_per_day) : "N/D"}
                     </td>
 
                     <td className="px-4 py-3">
-                      {rt ? formatNumber(rt.temperature, "°C") : "No Data"}
+                      {rt ? formatNumber(rt.temperature, "°C") : "N/D"}
                     </td>
 
                     <td className="px-4 py-3">
-                      {rt ? formatNumber(rt.pressure, " bar") : "No Data"}
+                      {rt ? formatNumber(rt.pressure, " bar") : "N/D"}
                     </td>
 
                     <td className="px-4 py-3">
-                      {rt ? formatNumber(rt.speed) : "No Data"}
+                      {rt ? formatNumber(rt.speed) : "N/D"}
                     </td>
 
                     <td className="px-4 py-3 text-slate-600">

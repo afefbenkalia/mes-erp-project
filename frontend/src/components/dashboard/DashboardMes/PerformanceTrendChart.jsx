@@ -41,7 +41,7 @@ export default function PerformanceTrendChart({ data = defaultData }) {
               border: "1px solid #e2e8f0",
               boxShadow: "0 4px 12px rgb(15 23 42 / 8%)",
             }}
-            formatter={(value) => [`${Number(value).toFixed(1)}%`, "Performance"]}
+            formatter={(value) => [`${Number(value).toFixed(1)}%`, "Performance (%)"]}
           />
           <Line
             type="monotone"

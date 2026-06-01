@@ -1,10 +1,13 @@
 import logging
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
 from . import service, schema
 from app.core.security import create_token, get_current_user, get_apps_for_user
+from typing import List
+from app.modules.maintenance.realtime import maintenance_ws_manager
 
 
 logger = logging.getLogger("auth_router")
@@ -43,14 +46,84 @@ def create_user_by_admin(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create user")
 
 
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    data: schema.ForgotPasswordRequest,
+    db: Session = Depends(get_db),
+):
+    """
+    Demande de réinitialisation de mot de passe.
+
+    1. Persiste la notification en base de données (survit aux reconnexions).
+    2. Broadcast WebSocket pour les admins déjà connectés (temps réel).
+    Retourne toujours 200 (anti-énumération d'emails).
+    """
+    user = service.get_user_by_email(db, data.email)
+    if user and user.is_active:
+        ts = datetime.utcnow().isoformat()
+        payload = {
+            "user_id":     user.id,
+            "user_nom":    user.nom,
+            "user_prenom": user.prenom,
+            "user_email":  user.email,
+            "timestamp":   ts,
+        }
+        # 1. Persistence DB — notification visible même si l'admin n'était pas connecté
+        service.create_notification(
+            db,
+            type="forgot_password_request",
+            title=f"{user.prenom} {user.nom} — mot de passe oublié",
+            target_role="admin",
+            payload=payload,
+        )
+        # 2. Broadcast WS — livraison instantanée si l'admin est déjà connecté
+        await maintenance_ws_manager.broadcast("forgot_password_request", {
+            **payload,
+            "message": f"{user.prenom} {user.nom} a oublié son mot de passe",
+        })
+        logger.info(f"Notification mot de passe oublié sauvegardée + broadcast pour {user.email}")
+    return {"message": "Si cet email est enregistré, l'administrateur a été notifié."}
+
+
+@router.get("/notifications", response_model=List[schema.NotificationResponse])
+def get_notifications(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Retourne les notifications non lues pour le rôle de l'utilisateur connecté."""
+    role = current_user.get("role")
+    return service.get_unread_notifications(db, role)
+
+
+@router.post("/notifications/read", status_code=status.HTTP_200_OK)
+def mark_notifications_read(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Marque toutes les notifications comme lues pour le rôle de l'utilisateur connecté."""
+    role = current_user.get("role")
+    service.mark_all_notifications_read(db, role)
+    return {"message": "Notifications marquées comme lues"}
+
+
 @router.post("/login", response_model=schema.LoginResponse)
 def login(data: schema.UserLogin, db: Session = Depends(get_db)):
     """
     Login endpoint.
-    
+
     Returns force_change_password = True if user is on first login.
+    Raises 403 if the account is inactive, 401 if credentials are invalid.
     """
-    user = service.authenticate(db, data.email, data.password)
+    try:
+        user = service.authenticate(db, data.email, data.password)
+    except ValueError as e:
+        if str(e) == "compte_inactif":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="compte_inactif",
+            )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

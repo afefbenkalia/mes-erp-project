@@ -119,10 +119,10 @@ export default function ProductionDashboard() {
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">
-            Production Dashboard
+            Tableau de bord Production
           </h1>
           <p className="mt-0.5 text-[11px] text-slate-500">
-            Manufacturing KPIs and trends — depuis 00:00 (heure système)
+            KPIs et tendances de production — depuis 00:00 (heure système)
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -133,7 +133,7 @@ export default function ProductionDashboard() {
                 : "bg-slate-100 text-slate-700 ring-slate-200/80"
             }`}
           >
-            MQTT {mqttStatus}
+            MQTT {mqttStatus === "Connected" ? "Connecté" : "Déconnecté"}
           </span>
           {isEmpty ? (
             <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-medium text-slate-600 ring-1 ring-slate-200/80">
@@ -146,16 +146,16 @@ export default function ProductionDashboard() {
             disabled={loading}
             className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
           >
-            {loading ? "Refreshing…" : "Refresh"}
+            {loading ? "Actualisation..." : "Actualiser"}
           </button>
         </div>
       </div>
 
       <section className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <KpiCard
-          title="Total production (24h)"
+          title="Production totale (24h)"
           value={Math.round(k.total_production_24h).toLocaleString()}
-          subtitle="Units recorded"
+          subtitle="Unités enregistrées"
           icon={Package}
           iconClassName="bg-blue-50 text-blue-700"
         />
@@ -163,7 +163,7 @@ export default function ProductionDashboard() {
           title="OEE"
           value={k.oee.toFixed(1)}
           suffix="%"
-          subtitle="Availability × Performance × Quality"
+          subtitle="Disponibilité × Performance × Qualité"
           icon={Gauge}
           iconClassName="bg-violet-50 text-violet-700"
         />
@@ -175,14 +175,14 @@ export default function ProductionDashboard() {
           iconClassName="bg-teal-50 text-teal-700"
         />
         <KpiCard
-          title="Availability"
+          title="Disponibilité"
           value={k.availability.toFixed(1)}
           suffix="%"
           icon={Timer}
           iconClassName="bg-amber-50 text-amber-800"
         />
         <KpiCard
-          title="Quality"
+          title="Qualité"
           value={k.quality.toFixed(1)}
           suffix="%"
           icon={ShieldCheck}
@@ -194,13 +194,13 @@ export default function ProductionDashboard() {
         <article className="rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-900">
-              TRS per machine
+              TRS par machine
             </h2>
             <Package className="h-3.5 w-3.5 text-slate-400" aria-hidden />
           </div>
           {displayed.production_by_machine.length === 0 ? (
             <p className="py-12 text-center text-xs text-slate-500">
-              No machine data in this window.
+              Aucune donnée machine dans cette période.
             </p>
           ) : (
             <MachineChart data={displayed.production_by_machine} />
@@ -210,7 +210,7 @@ export default function ProductionDashboard() {
         <article className="rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
           <div className="mb-3 flex items-center justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-900">
-              Performance over time
+              Performance dans le temps
             </h2>
             <Activity className="h-3.5 w-3.5 text-slate-400" aria-hidden />
           </div>
@@ -221,7 +221,7 @@ export default function ProductionDashboard() {
       <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <article className="flex h-full flex-col rounded-lg border border-slate-200/80 bg-white p-[18px] shadow-sm shadow-slate-200/50">
           <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold text-slate-900">OEE breakdown</h2>
+            <h2 className="text-sm font-semibold text-slate-900">Décomposition OEE</h2>
             <Gauge className="h-3.5 w-3.5 text-slate-400" aria-hidden />
           </div>
           <div className="flex-1">

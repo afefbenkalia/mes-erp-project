@@ -1,6 +1,18 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
 from app.database import Base
 from datetime import datetime
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id          = Column(Integer, primary_key=True, autoincrement=True, index=True)
+    type        = Column(String(50),  nullable=False)
+    title       = Column(String(500), nullable=False)
+    target_role = Column(String(50),  nullable=False, index=True)
+    payload     = Column(JSON,        nullable=True)
+    is_read     = Column(Boolean,     default=False, nullable=False)
+    created_at  = Column(DateTime,    default=datetime.utcnow, nullable=False)
 
 
 class User(Base):

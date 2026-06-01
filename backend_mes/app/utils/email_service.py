@@ -4,321 +4,402 @@ import json
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from app.core.config import settings
-from typing import Optional
-
 
 logger = logging.getLogger("email_service")
 
 
-def send_maintenance_notification_email(
-    email: str, payload: dict, retry_count: int = 0
+# ─────────────────────────────────────────────────────────────────────────────
+#  TEMPLATE PARTAGÉ
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_email(accent: str, title: str, subtitle: str, body: str) -> str:
+    """
+    Génère un email HTML responsive avec la charte graphique SITEX.
+
+    accent   : couleur de l'indicateur coloré sous le header (ex: "#22c55e")
+    title    : titre principal affiché dans le header
+    subtitle : sous-titre grisé sous le titre
+    body     : contenu HTML inséré dans la zone blanche centrale
+    """
+    return f"""<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>{title}</title>
+</head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif;-webkit-text-size-adjust:100%;">
+
+  <table width="100%" cellpadding="0" cellspacing="0" border="0"
+         style="background:#f1f5f9;padding:36px 16px;">
+    <tr><td align="center">
+      <table width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="max-width:600px;">
+
+        <!-- ══ HEADER ══ -->
+        <tr><td style="
+              background:linear-gradient(150deg,#1a2c4e 0%,#243b61 55%,#2e4a78 100%);
+              border-radius:14px 14px 0 0;
+              padding:40px 44px 32px;
+              text-align:center;">
+
+          <!-- Logo SITEX -->
+          <table cellpadding="0" cellspacing="0" border="0"
+                 style="margin:0 auto 22px;">
+            <tr><td style="
+                  background:rgba(255,255,255,0.10);
+                  border:1.5px solid rgba(255,255,255,0.22);
+                  border-radius:10px;
+                  padding:10px 24px;
+                  text-align:center;">
+              <span style="font-size:24px;font-weight:800;color:#ffffff;
+                           letter-spacing:3px;line-height:1;">SITEX</span>
+              <div style="font-size:10px;color:rgba(255,255,255,0.50);
+                          letter-spacing:2px;text-transform:uppercase;
+                          margin-top:3px;">Sousse &nbsp;·&nbsp; MES System</div>
+            </td></tr>
+          </table>
+
+          <h1 style="margin:0 0 8px;font-size:21px;font-weight:700;
+                     color:#ffffff;letter-spacing:-0.3px;line-height:1.3;">
+            {title}
+          </h1>
+          <p style="margin:0;font-size:13px;color:rgba(255,255,255,0.60);
+                    line-height:1.5;">
+            {subtitle}
+          </p>
+
+          <!-- Barre accentuée -->
+          <div style="margin-top:22px;height:3px;
+                      background:linear-gradient(90deg,transparent 0%,{accent} 50%,transparent 100%);
+                      border-radius:2px;"></div>
+        </td></tr>
+
+        <!-- ══ CONTENU ══ -->
+        <tr><td style="
+              background:#ffffff;
+              padding:40px 44px;
+              border-left:1px solid #e2e8f0;
+              border-right:1px solid #e2e8f0;">
+          {body}
+        </td></tr>
+
+        <!-- ══ FOOTER ══ -->
+        <tr><td style="
+              background:#f8fafc;
+              border:1px solid #e2e8f0;
+              border-top:none;
+              border-radius:0 0 14px 14px;
+              padding:20px 44px;
+              text-align:center;">
+          <p style="margin:0 0 5px;font-size:12px;color:#94a3b8;">
+            © 2026 SITEX Sousse &nbsp;·&nbsp; MES Platform v2.0
+          </p>
+          <p style="margin:0;font-size:11px;color:#cbd5e1;">
+            Cet email a été généré automatiquement — merci de ne pas y répondre.
+          </p>
+        </td></tr>
+
+      </table>
+    </td></tr>
+  </table>
+
+</body>
+</html>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  COMPOSANTS HTML RÉUTILISABLES
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _greeting(prenom: str, nom: str) -> str:
+    return f"""<p style="margin:0 0 20px;font-size:16px;color:#1e293b;font-weight:600;">
+      Bonjour {prenom} {nom},
+    </p>"""
+
+
+def _info_row(label: str, value: str) -> str:
+    return f"""
+      <tr>
+        <td style="padding:8px 14px 8px 0;font-size:13px;color:#64748b;
+                   white-space:nowrap;vertical-align:top;width:170px;">{label}</td>
+        <td style="padding:8px 0;font-size:13px;color:#1e293b;
+                   font-weight:600;word-break:break-all;">{value}</td>
+      </tr>"""
+
+
+def _info_card(rows_html: str) -> str:
+    return f"""
+    <table width="100%" cellpadding="0" cellspacing="0" border="0"
+           style="background:#f8fafc;border:1px solid #e2e8f0;
+                  border-radius:10px;padding:4px 18px;margin:20px 0;">
+      {rows_html}
+    </table>"""
+
+
+def _password_box(password: str) -> str:
+    return f"""
+    <div style="background:#fefce8;border:1.5px solid #fde047;border-radius:10px;
+                padding:16px 20px;margin-top:10px;text-align:center;">
+      <p style="margin:0 0 6px;font-size:11px;color:#92400e;
+                letter-spacing:1px;text-transform:uppercase;font-weight:600;">
+        Mot de passe temporaire
+      </p>
+      <div style="font-family:'Courier New',Courier,monospace;font-size:20px;
+                  font-weight:800;color:#1a2c4e;letter-spacing:3px;
+                  word-break:break-all;">
+        {password}
+      </div>
+    </div>"""
+
+
+def _alert_box(color_bg: str, color_border: str, color_text: str,
+               icon: str, text: str) -> str:
+    return f"""
+    <div style="background:{color_bg};border-left:4px solid {color_border};
+                border-radius:0 8px 8px 0;padding:14px 18px;margin:20px 0;">
+      <p style="margin:0;font-size:13px;color:{color_text};line-height:1.5;">
+        <strong>{icon}</strong>&nbsp; {text}
+      </p>
+    </div>"""
+
+
+def _cta_button(url: str, label: str, bg: str = "#2e4a78") -> str:
+    return f"""
+    <table cellpadding="0" cellspacing="0" border="0" style="margin:28px 0 4px;">
+      <tr><td style="border-radius:9px;background:{bg};">
+        <a href="{url}"
+           style="display:inline-block;padding:14px 34px;font-size:15px;
+                  font-weight:700;color:#ffffff;text-decoration:none;
+                  letter-spacing:0.3px;border-radius:9px;">
+          {label} &nbsp;→
+        </a>
+      </td></tr>
+    </table>"""
+
+
+def _divider() -> str:
+    return """<div style="height:1px;background:#f1f5f9;margin:24px 0;"></div>"""
+
+
+def _body_text(text: str, muted: bool = False) -> str:
+    color = "#64748b" if muted else "#475569"
+    return f'<p style="margin:0 0 14px;font-size:14px;color:{color};line-height:1.6;">{text}</p>'
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  ENVOI SMTP MUTUALISÉ
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _send(to: str, subject: str, html: str) -> None:
+    """Envoie un email via SMTP. Lève une exception en cas d'échec."""
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = settings.SMTP_FROM
+    msg["To"]      = to
+    msg.attach(MIMEText(html, "html"))
+    with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
+        server.starttls()
+        server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
+        server.send_message(msg)
+
+
+def _send_with_retry(to: str, subject: str, html: str,
+                     retry_count: int, max_retries: int,
+                     retry_fn) -> bool:
+    """Tente l'envoi et relance jusqu'à max_retries fois en cas d'échec."""
+    if not settings.SMTP_ENABLED:
+        logger.warning(f"Email service désactivé — envoi ignoré pour {to}")
+        return True
+    try:
+        _send(to, subject, html)
+        return True
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"Authentification SMTP échouée : {e}")
+    except smtplib.SMTPException as e:
+        logger.error(f"Erreur SMTP pour {to} : {e}")
+    except Exception as e:
+        logger.error(f"Erreur inattendue lors de l'envoi à {to} : {e}")
+
+    if retry_count < max_retries:
+        logger.info(f"Nouvelle tentative ({retry_count + 1}/{max_retries})…")
+        return retry_fn(retry_count + 1)
+    return False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  1. EMAIL DE BIENVENUE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_welcome_email(
+    email: str,
+    temporary_password: str,
+    nom: str,
+    prenom: str,
+    retry_count: int = 0,
 ) -> bool:
+    """Email de bienvenue envoyé à la création d'un compte."""
+    body = f"""
+      {_greeting(prenom, nom)}
+      {_body_text("Bienvenue sur la plateforme <strong>MES SITEX Sousse</strong>. "
+                  "Un compte a été créé pour vous par un administrateur.")}
+      {_divider()}
+      {_info_card(
+          _info_row("Adresse e-mail", email)
+      )}
+      {_password_box(temporary_password)}
+      {_alert_box(
+          "#fefce8", "#f59e0b", "#92400e",
+          "⚠️ Important",
+          "Ce mot de passe est temporaire. Vous devrez le modifier dès votre première connexion."
+      )}
+      {_divider()}
+      {_body_text("Cliquez sur le bouton ci-dessous pour accéder à la plateforme :", muted=True)}
+      {_cta_button(f"{settings.FRONTEND_URL}/login", "Accéder à la plateforme")}
+      {_divider()}
+      {_body_text("Pour toute question, contactez votre administrateur MES.", muted=True)}
     """
-    Send real-time maintenance notification email for machine error events.
 
-    Args:
-        email: Recipient email (maintenance responsible user)
-        payload: Notification payload sent to UI websocket clients
-        retry_count: Current retry attempt
+    html = _build_email(
+        accent="#22c55e",
+        title="Bienvenue sur MES SITEX",
+        subtitle="Vos identifiants de connexion",
+        body=body,
+    )
 
-    Returns:
-        True if email sent successfully, False otherwise
+    def retry(n):
+        return send_welcome_email(email, temporary_password, nom, prenom, n)
+
+    result = _send_with_retry(
+        email,
+        "Bienvenue sur MES SITEX — Vos identifiants de connexion",
+        html, retry_count, 3, retry,
+    )
+    if result:
+        logger.info(f"Email de bienvenue envoyé à {email}")
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  2. EMAIL DE RÉINITIALISATION DE MOT DE PASSE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_password_reset_email(
+    email: str,
+    temporary_password: str,
+    nom: str,
+    prenom: str,
+    retry_count: int = 0,
+) -> bool:
+    """Email de réinitialisation de mot de passe envoyé par l'administrateur."""
+    body = f"""
+      {_greeting(prenom, nom)}
+      {_body_text("Votre mot de passe a été <strong>réinitialisé</strong> par un administrateur. "
+                  "Un nouveau mot de passe temporaire vous a été attribué.")}
+      {_divider()}
+      {_info_card(
+          _info_row("Adresse e-mail", email)
+      )}
+      {_password_box(temporary_password)}
+      {_alert_box(
+          "#fff7ed", "#f97316", "#9a3412",
+          "⚠️ Sécurité",
+          "Vous devez changer ce mot de passe dès votre prochaine connexion. "
+          "Ne le partagez avec personne."
+      )}
+      {_divider()}
+      {_body_text("Cliquez sur le bouton ci-dessous pour vous connecter :", muted=True)}
+      {_cta_button(f"{settings.FRONTEND_URL}/login", "Se connecter", bg="#c2410c")}
+      {_divider()}
+      {_body_text("Si vous n'êtes pas à l'origine de cette demande, contactez immédiatement votre administrateur.", muted=True)}
     """
-    max_retries = 3
 
-    if not settings.SMTP_ENABLED:
-        logger.warning(f"Email service is disabled. Skipping maintenance alert email for {email}")
-        return True
+    html = _build_email(
+        accent="#f97316",
+        title="Réinitialisation de mot de passe",
+        subtitle="Un nouveau mot de passe temporaire vous a été attribué",
+        body=body,
+    )
 
+    def retry(n):
+        return send_password_reset_email(email, temporary_password, nom, prenom, n)
+
+    result = _send_with_retry(
+        email,
+        "MES SITEX — Réinitialisation de votre mot de passe",
+        html, retry_count, 3, retry,
+    )
+    if result:
+        logger.info(f"Email de réinitialisation envoyé à {email}")
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  3. EMAIL D'ALERTE MAINTENANCE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_maintenance_notification_email(
+    email: str,
+    payload: dict,
+    retry_count: int = 0,
+) -> bool:
+    """Email d'alerte envoyé aux techniciens lors d'un événement machine."""
     machine_ref = payload.get("machine_reference", "N/A")
-    state = payload.get("state", "N/A")
-    message = payload.get("message", "Alerte maintenance")
-    payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    state       = payload.get("state", "N/A")
+    message     = payload.get("message", "Alerte maintenance")
 
-    try:
-        html_content = f"""
-        <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; background-color: #f4f4f4; }}
-                    .container {{ max-width: 640px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; }}
-                    .header {{ background: #b91c1c; color: white; padding: 16px; border-radius: 8px 8px 0 0; }}
-                    .content {{ padding: 20px; color: #111827; }}
-                    .badge {{ display: inline-block; padding: 6px 10px; border-radius: 999px; background: #fee2e2; color: #991b1b; font-weight: bold; }}
-                    .payload {{ white-space: pre-wrap; background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px; padding: 12px; font-family: monospace; font-size: 12px; }}
-                    .footer {{ margin-top: 20px; color: #6b7280; font-size: 12px; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h2 style="margin:0;">Alerte maintenance en temps reel</h2>
-                    </div>
-                    <div class="content">
-                        <p><strong>Machine:</strong> {machine_ref}</p>
-                        <p><strong>Etat:</strong> <span class="badge">{state}</span></p>
-                        <p><strong>Message:</strong> {message}</p>
-                        <p><strong>Payload websocket (identique):</strong></p>
-                        <div class="payload">{payload_json}</div>
-                        <div class="footer">
-                            Cet email a ete genere automatiquement par MES.
-                        </div>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
+    state_colors = {
+        "ERREUR":      ("#fef2f2", "#ef4444", "#991b1b"),
+        "MAINTENANCE": ("#fff7ed", "#f97316", "#9a3412"),
+        "PAUSE":       ("#f1f5f9", "#64748b", "#334155"),
+    }
+    bg, border, text = state_colors.get(state, ("#f1f5f9", "#64748b", "#334155"))
+    accent = border
 
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"[MES] Alerte maintenance - {machine_ref} en {state}"
-        msg["From"] = settings.SMTP_FROM
-        msg["To"] = email
-        msg.attach(MIMEText(html_content, "html"))
+    state_label = {
+        "ERREUR":      "🔴 ERREUR",
+        "MAINTENANCE": "🟠 MAINTENANCE",
+        "PAUSE":       "⚪ PAUSE",
+        "MARCHE":      "🟢 EN MARCHE",
+    }.get(state, state)
 
-        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
-            server.starttls()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-            server.send_message(msg)
-
-        logger.info(f"Maintenance alert email sent successfully to {email}")
-        return True
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP authentication failed for maintenance alert email: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
-            return send_maintenance_notification_email(email, payload, retry_count + 1)
-        return False
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error sending maintenance alert email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
-            return send_maintenance_notification_email(email, payload, retry_count + 1)
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error sending maintenance alert email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying maintenance alert email... (attempt {retry_count + 1}/{max_retries})")
-            return send_maintenance_notification_email(email, payload, retry_count + 1)
-        return False
-
-
-def send_welcome_email(email: str, temporary_password: str, nom: str, prenom: str, retry_count: int = 0) -> bool:
+    body = f"""
+      {_body_text(f"Un événement machine a été détecté sur la plateforme MES <strong>SITEX Sousse</strong>.")}
+      {_divider()}
+      {_info_card(
+          _info_row("Machine", f"<code style='font-family:monospace;'>{machine_ref}</code>") +
+          _info_row("État détecté",
+                    f"<span style='background:{bg};color:{text};border:1px solid {border};"
+                    f"padding:3px 10px;border-radius:99px;font-size:12px;"
+                    f"font-weight:700;'>{state_label}</span>") +
+          _info_row("Message", message)
+      )}
+      {_alert_box(
+          bg, border, text,
+          "ℹ️ Action requise",
+          "Veuillez prendre en charge cette intervention depuis le module Maintenance de la plateforme."
+      )}
+      {_divider()}
+      {_cta_button(f"{settings.FRONTEND_URL}/dashboard", "Ouvrir le tableau de bord", bg="#1a2c4e")}
+      {_divider()}
+      {_body_text("Cet email est envoyé automatiquement à chaque changement d'état critique.", muted=True)}
     """
-    Send welcome email with temporary password to new user.
-    
-    Args:
-        email: User's email
-        temporary_password: Temporary password generated by system
-        nom: User's last name
-        prenom: User's first name
-        retry_count: Current retry attempt
-    
-    Returns:
-        True if email sent successfully, False otherwise
-    """
-    max_retries = 3
-    
-    if not settings.SMTP_ENABLED:
-        logger.warning(f"Email service is disabled. Skipping email for {email}")
-        return True
-    
-    try:
-        # Create HTML email content
-        html_content = f"""
-        <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; background-color: #f4f4f4; }}
-                    .container {{ max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-                    .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }}
-                    .header h1 {{ margin: 0; font-size: 28px; }}
-                    .content {{ padding: 30px 20px; }}
-                    .welcome-text {{ font-size: 16px; color: #333; margin-bottom: 20px; }}
-                    .credentials {{ background-color: #f9f9f9; padding: 15px; border-left: 4px solid #667eea; margin: 20px 0; border-radius: 4px; }}
-                    .credentials p {{ margin: 10px 0; font-size: 14px; }}
-                    .password {{ background-color: #fff3cd; padding: 10px; border-radius: 4px; font-family: monospace; font-weight: bold; word-break: break-all; }}
-                    .action-button {{ display: inline-block; background-color: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; margin-top: 20px; font-weight: bold; }}
-                    .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }}
-                    .warning {{ background-color: #fff3cd; padding: 15px; border-radius: 4px; margin: 20px 0; color: #856404; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>🏭 MES System</h1>
-                        <p>Système de Gestion de Production</p>
-                    </div>
-                    
-                    <div class="content">
-                        <div class="welcome-text">
-                            <p>Bonjour <strong>{prenom} {nom}</strong>,</p>
-                            <p>Bienvenue dans le MES System! Un compte a été créé pour vous par un administrateur.</p>
-                        </div>
-                        
-                        <div class="credentials">
-                            <p><strong>Email:</strong> {email}</p>
-                            <p><strong>Mot de passe temporaire:</strong></p>
-                            <div class="password">{temporary_password}</div>
-                        </div>
-                        
-                        <div class="warning">
-                            <strong>⚠️ Important:</strong> Ce mot de passe est temporaire. Vous devrez le changer lors de votre première connexion.
-                        </div>
-                        
-                        <p>Pour accéder à la plateforme, cliquez sur le bouton ci-dessous:</p>
-                        <a href="{settings.FRONTEND_URL}/login" class="action-button">Se connecter</a>
-                        
-                        <p style="margin-top: 30px; font-size: 14px; color: #666;">
-                            Si vous avez des questions, veuillez contacter l'équipe d'administration.
-                        </p>
-                    </div>
-                    
-                    <div class="footer">
-                        <p>© 2026 MES System. Tous droits réservés.</p>
-                        <p>Cet email a été généré automatiquement. Veuillez ne pas y répondre.</p>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-        
-        # Create message
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = "Bienvenue au MES System - Informations de Connexion"
-        msg['From'] = settings.SMTP_FROM
-        msg['To'] = email
-        
-        # Attach HTML content
-        msg.attach(MIMEText(html_content, 'html'))
-        
-        # Connect to SMTP server and send
-        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
-            server.starttls()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-            server.send_message(msg)
-        
-        logger.info(f"Welcome email sent successfully to {email}")
-        return True
-        
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP authentication failed: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_welcome_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
 
+    html = _build_email(
+        accent=accent,
+        title="Alerte Maintenance",
+        subtitle=f"Machine {machine_ref} — état : {state}",
+        body=body,
+    )
 
-def send_password_reset_email(email: str, temporary_password: str, nom: str, prenom: str, retry_count: int = 0) -> bool:
-    """
-    Send password reset email with a new temporary password.
+    def retry(n):
+        return send_maintenance_notification_email(email, payload, n)
 
-    Args:
-        email: User's email
-        temporary_password: Newly generated temporary password
-        nom: User's last name
-        prenom: User's first name
-        retry_count: Current retry attempt
-
-    Returns:
-        True if email sent successfully, False otherwise
-    """
-    max_retries = 3
-
-    if not settings.SMTP_ENABLED:
-        logger.warning(f"Email service is disabled. Skipping password reset email for {email}")
-        return True
-
-    try:
-        html_content = f"""
-        <html>
-            <head>
-                <style>
-                    body {{ font-family: Arial, sans-serif; background-color: #f4f4f4; }}
-                    .container {{ max-width: 600px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }}
-                    .header {{ background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); color: white; padding: 20px; border-radius: 8px 8px 0 0; text-align: center; }}
-                    .content {{ padding: 30px 20px; }}
-                    .credentials {{ background-color: #f9f9f9; padding: 15px; border-left: 4px solid #1e293b; margin: 20px 0; border-radius: 4px; }}
-                    .password {{ background-color: #fff3cd; padding: 10px; border-radius: 4px; font-family: monospace; font-weight: bold; word-break: break-all; }}
-                    .warning {{ background-color: #fee2e2; padding: 15px; border-radius: 4px; margin: 20px 0; color: #991b1b; }}
-                    .action-button {{ display: inline-block; background-color: #0f172a; color: white; padding: 12px 30px; text-decoration: none; border-radius: 4px; margin-top: 20px; font-weight: bold; }}
-                    .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }}
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>MES System</h1>
-                        <p>Password Reset Notification</p>
-                    </div>
-                    <div class="content">
-                        <p>Bonjour <strong>{prenom} {nom}</strong>,</p>
-                        <p>Votre mot de passe a ete reinitialise par un administrateur.</p>
-
-                        <div class="credentials">
-                            <p><strong>Email:</strong> {email}</p>
-                            <p><strong>Nouveau mot de passe temporaire:</strong></p>
-                            <div class="password">{temporary_password}</div>
-                        </div>
-
-                        <div class="warning">
-                            <strong>Important:</strong> Vous devez changer ce mot de passe lors de votre prochaine connexion.
-                        </div>
-
-                        <a href="{settings.FRONTEND_URL}/login" class="action-button">Se connecter</a>
-                    </div>
-                    <div class="footer">
-                        <p>© 2026 MES System. Tous droits reserves.</p>
-                    </div>
-                </div>
-            </body>
-        </html>
-        """
-
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = "MES System - Reinitialisation de mot de passe"
-        msg['From'] = settings.SMTP_FROM
-        msg['To'] = email
-        msg.attach(MIMEText(html_content, 'html'))
-
-        with smtplib.SMTP(settings.SMTP_SERVER, settings.SMTP_PORT) as server:
-            server.starttls()
-            server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-            server.send_message(msg)
-
-        logger.info(f"Password reset email sent successfully to {email}")
-        return True
-
-    except smtplib.SMTPAuthenticationError as e:
-        logger.error(f"SMTP authentication failed: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_password_reset_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
-
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error sending password reset email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_password_reset_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
-
-    except Exception as e:
-        logger.error(f"Unexpected error sending password reset email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_password_reset_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
-        
-    except smtplib.SMTPException as e:
-        logger.error(f"SMTP error sending email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_welcome_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
-        
-    except Exception as e:
-        logger.error(f"Unexpected error sending email to {email}: {e}")
-        if retry_count < max_retries:
-            logger.info(f"Retrying... (attempt {retry_count + 1}/{max_retries})")
-            return send_welcome_email(email, temporary_password, nom, prenom, retry_count + 1)
-        return False
+    result = _send_with_retry(
+        email,
+        f"[MES SITEX] Alerte maintenance — {machine_ref} en {state}",
+        html, retry_count, 3, retry,
+    )
+    if result:
+        logger.info(f"Email d'alerte maintenance envoyé à {email} pour {machine_ref}")
+    return result

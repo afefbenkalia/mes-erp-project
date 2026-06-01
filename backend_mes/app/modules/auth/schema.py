@@ -63,6 +63,23 @@ class LoginResponse(BaseModel):
     force_change_password: bool = False
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class NotificationResponse(BaseModel):
+    id: int
+    type: str
+    title: str
+    target_role: str
+    payload: Optional[dict] = None
+    is_read: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class RoleStat(BaseModel):
     role: str
     count: int
