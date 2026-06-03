@@ -1469,34 +1469,20 @@ export default function ReportsDashboard() {
             {/* Vertical separator */}
             <div style={{ width: 1, height: 36, background: C.border, alignSelf: "flex-end", margin: "0 2px" }} />
 
-            {/* Generate button */}
-            <div style={{ alignSelf: "flex-end" }}>
+            {/* Generate + Save buttons */}
+            <div style={{ alignSelf: "flex-end", display: "flex", gap: 8 }}>
               <PrimaryBtn onClick={generate} disabled={loading}>
                 {loading
                   ? <><div style={{ width: 14, height: 14, borderRadius: "50%", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "#fff", animation: "_spin 0.75s linear infinite" }} />Génération…</>
                   : "Générer le rapport"}
               </PrimaryBtn>
+              {report && !loading && (
+                <GhostBtn onClick={saveReport} active={savedFlash}>
+                  {savedFlash ? <><CheckCircle2 size={13} /> Sauvegardé</> : <><Save size={13} /> Sauvegarder</>}
+                </GhostBtn>
+              )}
             </div>
           </div>
-
-          {/* Row 2: export actions — only when report is ready */}
-          {report && !loading && (
-            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${C.borderLight}`, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, color: C.textMuted, fontWeight: 600, marginRight: 4 }}>Actions :</span>
-              <GhostBtn onClick={saveReport} active={savedFlash}>
-                {savedFlash ? <><CheckCircle2 size={13} /> Sauvegardé</> : <><Save size={13} /> Sauvegarder</>}
-              </GhostBtn>
-              <GhostBtn onClick={() => openPrintWindow(report, reportType, label)} title="Exporter en PDF">
-                <Download size={13} /> PDF
-              </GhostBtn>
-              <GhostBtn onClick={() => { const csv = buildCSV(report, reportType, label); const fn = reportType === "daily" ? `rapport_journalier_${selDate}.csv` : reportType === "weekly" ? `rapport_hebdomadaire_${selYear}_S${selWeek}.csv` : `rapport_${reportType}_${selDateFrom}_${selDateTo}.csv`; downloadCSV(csv, fn); }} title="Exporter en CSV (Excel)">
-                <Download size={13} /> Excel
-              </GhostBtn>
-              <GhostBtn onClick={() => openPrintWindow(report, reportType, label)} title="Imprimer">
-                <Printer size={13} />
-              </GhostBtn>
-            </div>
-          )}
         </div>
       </Panel>
 

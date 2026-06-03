@@ -1,16 +1,200 @@
-// OrdresFabrication.jsx — MES (CORRIGÉ - sans champ machine)
+// OrdresFabrication.jsx — MES (Design moderne sans filtre produit)
 import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const MES_OF_URL = "http://127.0.0.1:8000/api/ordres-fabrication";
 const MES_PROD_URL = "http://127.0.0.1:8000/api/productions";
 
-// ✅ CORRIGÉ: Utiliser quantite_produit_fini au lieu de quantite
+// ─── PALETTE DE COULEURS ────────────────────────────────────────────
+const C = {
+  bg: "#f4f6f9",
+  surface: "#ffffff",
+  border: "#e3e8ef",
+  accent: "#2563eb",
+  accentLt: "#eff4ff",
+  green: "#16a34a",
+  greenLt: "#f0fdf4",
+  red: "#dc2626",
+  redLt: "#fef2f2",
+  amber: "#d97706",
+  amberLt: "#fffbeb",
+  text: "#111827",
+  sub: "#374151",
+  muted: "#6b7280",
+  inputBg: "#f9fafb",
+};
+
+// ─── STYLES ─────────────────────────────────────────────────────────
+const s = {
+  app: {
+    fontFamily: "'IBM Plex Sans', 'Segoe UI', sans-serif",
+    background: C.bg,
+    minHeight: "100vh",
+    color: C.text,
+  },
+  topbar: {
+    background: C.surface,
+    borderBottom: `1px solid ${C.border}`,
+    padding: "0 2rem",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    height: 60,
+    position: "sticky",
+    top: 0,
+    zIndex: 100,
+    boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+  },
+  logoRow: { display: "flex", alignItems: "center", gap: "0.75rem" },
+  logo: {
+    width: 34, height: 34,
+    background: C.accent,
+    borderRadius: 8,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: "1rem", fontWeight: 700, color: "#fff",
+  },
+  h1: { margin: 0, fontSize: "1rem", fontWeight: 600, color: C.text },
+  h1sub: { margin: 0, fontSize: "0.75rem", color: C.muted },
+  badgeOnline: {
+    background: C.greenLt, color: C.green,
+    border: `1px solid #bbf7d0`,
+    borderRadius: 20, padding: "3px 10px",
+    fontSize: "0.72rem", fontWeight: 600,
+    display: "flex", alignItems: "center", gap: 4,
+  },
+  dot: { width: 6, height: 6, borderRadius: "50%", background: C.green, display: "inline-block" },
+  badgeSync: {
+    background: C.accentLt, color: C.accent,
+    border: `1px solid #bfdbfe`,
+    borderRadius: 20, padding: "3px 10px",
+    fontSize: "0.72rem", fontWeight: 600,
+  },
+
+  main: { padding: "1.75rem 2rem", maxWidth: 1400, margin: "0 auto" },
+
+  kpiRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4, 1fr)",
+    gap: "1rem",
+    marginBottom: "1.75rem",
+  },
+  kpiCard: {
+    background: C.surface,
+    border: `1px solid ${C.border}`,
+    borderRadius: 10,
+    padding: "1.1rem 1.25rem",
+    display: "flex", alignItems: "center", gap: "1rem",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+  },
+  kpiIcon: (lt) => ({
+    width: 40, height: 40, borderRadius: 8,
+    background: lt,
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: "1.15rem", flexShrink: 0,
+  }),
+  kpiLabel: { margin: "0 0 2px", fontSize: "0.72rem", color: C.muted, fontWeight: 500 },
+  kpiVal: (color) => ({ margin: 0, fontSize: "1.6rem", fontWeight: 700, color: color, lineHeight: 1 }),
+
+  section: {
+    background: C.surface,
+    border: `1px solid ${C.border}`,
+    borderRadius: 10,
+    padding: "1.5rem",
+    marginBottom: "1.25rem",
+    boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+  },
+  sectionHeader: {
+    display: "flex", justifyContent: "space-between",
+    alignItems: "center", marginBottom: "1.25rem",
+    paddingBottom: "0.75rem",
+    borderBottom: `1px solid ${C.border}`,
+  },
+  sectionTitle: { margin: 0, fontSize: "0.9rem", fontWeight: 600, color: C.text },
+  sectionSub: { margin: 0, fontSize: "0.78rem", color: C.muted },
+
+  table: { width: "100%", borderCollapse: "collapse", fontSize: "0.875rem" },
+  thead: { background: C.bg },
+  th: {
+    textAlign: "left", padding: "0.6rem 0.9rem",
+    borderBottom: `1px solid ${C.border}`,
+    color: C.muted, fontWeight: 600, fontSize: "0.72rem",
+    textTransform: "uppercase",
+  },
+  tr: (i) => ({
+    background: i % 2 === 0 ? "#ffffff" : C.bg,
+  }),
+  td: { padding: "0.7rem 0.9rem", borderBottom: `1px solid ${C.border}`, color: C.sub },
+
+  pill: (bg, color) => ({
+    display: "inline-flex", alignItems: "center",
+    padding: "2px 9px", borderRadius: 20,
+    fontSize: "0.72rem", fontWeight: 600,
+    background: bg, color: color,
+  }),
+
+  emptyState: {
+    textAlign: "center", padding: "3rem",
+    color: C.muted,
+  },
+  emptyIcon: { fontSize: "2.5rem" },
+  filterRow: {
+    display: "flex",
+    gap: "1rem",
+    marginBottom: "1.25rem",
+    flexWrap: "wrap",
+  },
+  filterGroup: {
+    flex: 1,
+    minWidth: "200px",
+  },
+  label: { fontSize: "0.78rem", fontWeight: 500, color: C.sub, marginBottom: "0.25rem", display: "block" },
+  input: {
+    padding: "0.6rem 0.85rem",
+    background: C.inputBg,
+    border: `1px solid ${C.border}`,
+    borderRadius: 7,
+    color: C.text,
+    fontSize: "0.875rem",
+    fontFamily: "inherit",
+    outline: "none",
+    width: "100%",
+    boxSizing: "border-box",
+  },
+  select: {
+    padding: "0.6rem 0.85rem",
+    background: C.inputBg,
+    border: `1px solid ${C.border}`,
+    borderRadius: 7,
+    color: C.text,
+    fontSize: "0.875rem",
+    fontFamily: "inherit",
+    outline: "none",
+    width: "100%",
+    boxSizing: "border-box",
+    cursor: "pointer",
+  },
+  ofTag: {
+    background: C.accentLt,
+    color: C.accent,
+    padding: "2px 8px",
+    borderRadius: 4,
+    fontSize: "0.8rem",
+    fontFamily: "monospace",
+    fontWeight: 600,
+  },
+  quantityInfo: {
+    fontSize: "0.7rem",
+    color: C.muted,
+    marginLeft: "0.5rem",
+  },
+};
+
+// ─── FONCTIONS ─────────────────────────────────────────────────────
 const computeStatut = (of, productions = []) => {
   if (!productions || productions.length === 0) return "Planifié";
   
   const produced = productions.reduce((sum, p) => {
-    const qty = Number(p.quantite_produit_fini || p.quantite || 0);
+    const qty = Number(p.quantite_produit_fini || p.quantite || 0); 
     return sum + qty;
   }, 0);
   
@@ -21,37 +205,33 @@ const computeStatut = (of, productions = []) => {
   return "Planifié";
 };
 
-const STATUT_STYLE = {
-  "Planifié": { bg: "#dbeafe", color: "#1e40af" },
-  "En cours": { bg: "#fef3c7", color: "#92400e" },
-  "Terminé":  { bg: "#d1fae5", color: "#065f46" },
+const STATUT_ICON = { "Planifié": "📅", "En cours": "⚙️", "Terminé": "✅" };
+const STATUT_COLOR = {
+  "Planifié": { bg: C.amberLt, color: C.amber },
+  "En cours": { bg: C.accentLt, color: C.accent },
+  "Terminé": { bg: C.greenLt, color: C.green },
 };
 
-const STATUT_ICON = { "Planifié": "📅", "En cours": "⚙️", "Terminé": "✅" };
+const fmt = (n) => Number(n || 0).toLocaleString("fr-FR");
 
+// ─── COMPOSANT PRINCIPAL ───────────────────────────────────────────
 const OrdresFabrication = () => {
   const [ofs, setOfs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [filterOF, setFilterOF] = useState("");
   const [filterStatut, setFilterStatut] = useState("");
-  const [filterDate, setFilterDate] = useState("");
 
   const fetchOF = async () => {
     setLoading(true);
     try {
-      // ✅ Récupérer tous les OF
       const res = await axios.get(`${MES_OF_URL}/`);
       const ofsData = res.data;
 
-      // ✅ Pour chaque OF, récupérer ses productions et calculer le statut
       const ofsWithStatus = await Promise.all(
         ofsData.map(async (of) => {
           try {
-            // Récupérer les productions pour cet OF
             const prodRes = await axios.get(`${MES_PROD_URL}/?of_id=${of.id}`);
             const productions = prodRes.data;
-            
-            // ✅ Calculer le statut avec les productions
             const statut = computeStatut(of, productions);
             
             return {
@@ -82,13 +262,6 @@ const OrdresFabrication = () => {
     fetchOF(); 
   }, []);
 
-  const getCurrentDate = () => {
-    const days = ["Dimanche","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"];
-    const months = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-    const d = new Date();
-    return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
-  };
-
   const totalOF = ofs.length;
   const ofActif = ofs.filter(o => o.statut === "En cours").length;
   const ofTermine = ofs.filter(o => o.statut === "Terminé").length;
@@ -96,248 +269,153 @@ const OrdresFabrication = () => {
 
   const filteredOFs = ofs.filter(o =>
     (!filterOF || o.numero?.toLowerCase().includes(filterOF.toLowerCase())) &&
-    (!filterStatut || o.statut === filterStatut) &&
-    (!filterDate || o.date_debut === filterDate)
+    (!filterStatut || o.statut === filterStatut)
   );
 
   return (
-    <div style={s.container}>
-      {/* HEADER */}
-      <div style={s.header}>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <span style={{ fontSize: "2.2rem" }}>📋</span>
+    <div style={s.app}>
+      {/* TOPBAR */}
+      <div style={s.topbar}>
+        <div style={s.logoRow}>
+          <div style={s.logo}>M</div>
           <div>
-            <h1 style={s.title}>MES – ORDRES DE FABRICATION</h1>
-            <p style={s.subtitle}>Module Consultation • Réception depuis ERP • Version 2.1</p>
+            <p style={s.h1}>MES — Ordres de Fabrication</p>
+            <p style={s.h1sub}>Module Consultation • Réception depuis ERP</p>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <span style={{ color: "#64748b", fontSize: "0.9rem" }}>{getCurrentDate()}</span>
-          <button style={s.btnRefresh} onClick={fetchOF} disabled={loading}>
-            {loading ? "⏳" : "🔄"} Actualiser
-          </button>
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+          <span style={s.badgeOnline}><span style={s.dot} />En ligne</span>
+          <span style={s.badgeSync}>Sync MES</span>
         </div>
       </div>
 
-      {/* KPI CARDS */}
-      <div style={s.kpiGrid}>
-        {[
-          { label: "Total OF", value: totalOF, icon: "📊", color: "#2563eb" },
-          { label: "Planifiés", value: ofPlanifie, icon: "📅", color: "#6366f1" },
-          { label: "En cours", value: ofActif, icon: "⚙️", color: "#f59e0b" },
-          { label: "Terminés", value: ofTermine, icon: "✅", color: "#10b981" },
-        ].map((k) => (
-          <div key={k.label} style={{ ...s.kpiCard, borderLeft: `4px solid ${k.color}` }}>
-            <span style={{ fontSize: "1.8rem", background: "#f1f5f9", padding: "0.6rem", borderRadius: "10px" }}>{k.icon}</span>
+      <div style={s.main}>
+        {/* KPI CARDS */}
+        <div style={s.kpiRow}>
+          <div style={s.kpiCard}>
+            <div style={s.kpiIcon(C.accentLt)}>📊</div>
             <div>
-              <p style={s.kpiLabel}>{k.label}</p>
-              <p style={{ ...s.kpiValue, color: k.color }}>{k.value}</p>
+              <p style={s.kpiLabel}>Total OF</p>
+              <p style={s.kpiVal(C.accent)}>{totalOF}</p>
             </div>
           </div>
-        ))}
-      </div>
-
-      {/* CONTENU */}
-      <div style={s.content}>
-        <h2 style={s.sectionTitle}>Liste des Ordres de Fabrication</h2>
-
-        {/* FILTRES - Supprimé filtre machine */}
-        <div style={s.filterRow}>
-          <input
-            style={s.input}
-            type="text"
-            placeholder="🔍 Recherche N° OF..."
-            value={filterOF}
-            onChange={e => setFilterOF(e.target.value)}
-          />
-
-          <select style={s.select} value={filterStatut} onChange={e => setFilterStatut(e.target.value)}>
-            <option value="">Tous statuts</option>
-            <option value="Planifié">📅 Planifié</option>
-            <option value="En cours">⚙️ En cours</option>
-            <option value="Terminé">✅ Terminé</option>
-          </select>
-
-          <input
-            style={s.input}
-            type="date"
-            value={filterDate}
-            onChange={e => setFilterDate(e.target.value)}
-          />
+          <div style={s.kpiCard}>
+            <div style={s.kpiIcon(C.amberLt)}>📅</div>
+            <div>
+              <p style={s.kpiLabel}>Planifiés</p>
+              <p style={s.kpiVal(C.amber)}>{ofPlanifie}</p>
+            </div>
+          </div>
+          <div style={s.kpiCard}>
+            <div style={s.kpiIcon(C.accentLt)}>⚙️</div>
+            <div>
+              <p style={s.kpiLabel}>En cours</p>
+              <p style={s.kpiVal(C.accent)}>{ofActif}</p>
+            </div>
+          </div>
+          <div style={s.kpiCard}>
+            <div style={s.kpiIcon(C.greenLt)}>✅</div>
+            <div>
+              <p style={s.kpiLabel}>Terminés</p>
+              <p style={s.kpiVal(C.green)}>{ofTermine}</p>
+            </div>
+          </div>
         </div>
 
-        {/* RÉSULTAT */}
-        <p style={{ color: "#94a3b8", fontSize: "0.85rem", marginBottom: "1rem" }}>
-          {filteredOFs.length} OF(s) affiché(s) sur {totalOF}
-        </p>
+        {/* TABLEAU */}
+        <div style={s.section}>
+          <div style={s.sectionHeader}>
+            <div>
+              <p style={s.sectionTitle}>Liste des Ordres de Fabrication</p>
+              <p style={s.sectionSub}>{filteredOFs.length} OF(s) affiché(s) sur {totalOF}</p>
+            </div>
+          </div>
 
-        {loading ? (
-          <div style={s.empty}>⏳ Chargement des ordres de fabrication...</div>
-        ) : filteredOFs.length === 0 ? (
-          <div style={s.empty}>
-            <span style={{ fontSize: "3rem", display: "block", marginBottom: "1rem" }}>📭</span>
-            Aucun ordre de fabrication trouvé
+          {/* FILTRES - Sans filtre produit */}
+          <div style={s.filterRow}>
+            <div style={s.filterGroup}>
+              <label style={s.label}>🔍 Recherche N° OF</label>
+              <input
+                style={s.input}
+                type="text"
+                placeholder="N° OF..."
+                value={filterOF}
+                onChange={e => setFilterOF(e.target.value)}
+              />
+            </div>
+
+            <div style={s.filterGroup}>
+              <label style={s.label}>📊 Statut</label>
+              <select style={s.select} value={filterStatut} onChange={e => setFilterStatut(e.target.value)}>
+                <option value="">Tous statuts</option>
+                <option value="Planifié">📅 Planifié</option>
+                <option value="En cours">⚙️ En cours</option>
+                <option value="Terminé">✅ Terminé</option>
+              </select>
+            </div>
           </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={s.table}>
-              <thead>
-                <tr>
-                  {["N° OF", "Produit", "Quantité", "Début", "Fin", "Statut"].map(h => (
-                    <th key={h} style={s.th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredOFs.map((o, i) => {
-                  const ss = STATUT_STYLE[o.statut] || { bg: "#f1f5f9", color: "#475569" };
-                  // Calculer la quantité totale produite pour affichage
-                  const totalProduit = o.productions?.reduce((sum, p) => 
-                    sum + Number(p.quantite_produit_fini || 0), 0) || 0;
-                  
-                  return (
-                    <tr key={o.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#f8fafc" }}>
-                      <td style={s.td}>
-                        <span style={s.ofTag}>{o.numero}</span>
-                      </td>
-                      <td style={s.td}>{o.produit}</td>
-                      <td style={s.td}>
-                        <strong>{o.quantite}</strong> kg
-                        {totalProduit > 0 && (
-                          <span style={{ fontSize: "0.75rem", color: "#64748b", marginLeft: "0.5rem" }}>
-                            ({totalProduit} kg prod.)
+
+          {loading ? (
+            <div style={s.emptyState}>
+              <div style={s.emptyIcon}>⏳</div>
+              <p>Chargement des ordres de fabrication...</p>
+            </div>
+          ) : filteredOFs.length === 0 ? (
+            <div style={s.emptyState}>
+              <div style={s.emptyIcon}>📭</div>
+              <p>Aucun ordre de fabrication trouvé</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={s.table}>
+                <thead style={s.thead}>
+                  <tr>
+                    <th style={s.th}>N° OF</th>
+                    <th style={s.th}>Produit</th>
+                    <th style={s.th}>Quantité</th>
+                    <th style={s.th}>Début</th>
+                    <th style={s.th}>Fin</th>
+                    <th style={s.th}>Statut</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredOFs.map((o, i) => {
+                    const sc = STATUT_COLOR[o.statut] || STATUT_COLOR["Planifié"];
+                    const totalProduit = o.productions?.reduce((sum, p) => 
+                      sum + Number(p.quantite_produit_fini || 0), 0) || 0;
+                    
+                    return (
+                      <tr key={o.id || i} style={s.tr(i)}>
+                        <td style={s.td}>
+                          <code style={s.ofTag}>{o.numero}</code>
+                        </td>
+                        <td style={s.td}>{o.produit}</td>
+                        <td style={s.td}>
+                          <strong>{fmt(o.quantite)} kg</strong>
+                          {totalProduit > 0 && (
+                            <span style={s.quantityInfo}>
+                              ({fmt(totalProduit)} kg prod.)
+                            </span>
+                          )}
+                        </td>
+                        <td style={s.td}>{o.date_debut || "—"}</td>
+                        <td style={s.td}>{o.date_fin || "—"}</td>
+                        <td style={s.td}>
+                          <span style={s.pill(sc.bg, sc.color)}>
+                            {STATUT_ICON[o.statut]} {o.statut}
                           </span>
-                        )}
-                      </td>
-                      <td style={s.td}>{o.date_debut || "—"}</td>
-                      <td style={s.td}>{o.date_fin || "—"}</td>
-                      <td style={s.td}>
-                        <span style={{ ...s.badge, background: ss.bg, color: ss.color }}>
-                          {STATUT_ICON[o.statut]} {o.statut}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
-};
-
-const s = {
-  container: {
-    padding: "2rem",
-    background: "#f8fafc",
-    minHeight: "100vh",
-    fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
-  },
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    background: "#fff",
-    padding: "1.5rem 2rem",
-    borderRadius: "16px",
-    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.08)",
-    marginBottom: "2rem",
-    flexWrap: "wrap",
-    gap: "1rem",
-  },
-  title: { margin: 0, color: "#0f172a", fontSize: "1.6rem", fontWeight: "700" },
-  subtitle: { margin: 0, color: "#64748b", fontSize: "0.85rem" },
-  kpiGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4,1fr)",
-    gap: "1.25rem",
-    marginBottom: "2rem",
-  },
-  kpiCard: {
-    background: "#fff",
-    padding: "1.25rem",
-    borderRadius: "12px",
-    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.08)",
-    display: "flex",
-    alignItems: "center",
-    gap: "1rem",
-  },
-  kpiLabel: { margin: "0 0 0.25rem", color: "#64748b", fontSize: "0.85rem" },
-  kpiValue: { margin: 0, fontSize: "2rem", fontWeight: "700" },
-  content: {
-    background: "#fff",
-    borderRadius: "16px",
-    padding: "2rem",
-    boxShadow: "0 4px 6px -1px rgba(0,0,0,0.08)",
-  },
-  sectionTitle: { margin: "0 0 1.5rem", color: "#0f172a", fontSize: "1.2rem", fontWeight: "600" },
-  filterRow: {
-    display: "grid",
-    gridTemplateColumns: "repeat(3,1fr)",
-    gap: "1rem",
-    marginBottom: "1.25rem",
-  },
-  input: {
-    padding: "0.7rem 1rem",
-    border: "1px solid #e2e8f0",
-    borderRadius: "8px",
-    fontSize: "0.9rem",
-    outline: "none",
-    width: "100%",
-    boxSizing: "border-box",
-    background: "#fff",
-  },
-  select: {
-    padding: "0.7rem 1rem",
-    border: "1px solid #e2e8f0",
-    borderRadius: "8px",
-    fontSize: "0.9rem",
-    background: "#fff",
-    cursor: "pointer",
-    width: "100%",
-    boxSizing: "border-box",
-  },
-  table: { width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" },
-  th: {
-    textAlign: "left",
-    padding: "0.75rem 1rem",
-    borderBottom: "2px solid #e2e8f0",
-    color: "#64748b",
-    fontWeight: "600",
-    fontSize: "0.85rem",
-    whiteSpace: "nowrap",
-  },
-  td: { padding: "0.75rem 1rem", borderBottom: "1px solid #f1f5f9", color: "#1e293b" },
-  ofTag: {
-    background: "#e2e8f0",
-    color: "#334155",
-    padding: "0.2rem 0.5rem",
-    borderRadius: "4px",
-    fontSize: "0.82rem",
-    fontWeight: "600",
-    fontFamily: "monospace",
-  },
-  badge: {
-    padding: "0.25rem 0.75rem",
-    borderRadius: "20px",
-    fontSize: "0.82rem",
-    fontWeight: "600",
-    display: "inline-block",
-    whiteSpace: "nowrap",
-  },
-  btnRefresh: {
-    padding: "0.6rem 1.2rem",
-    background: "#f1f5f9",
-    color: "#475569",
-    border: "1px solid #e2e8f0",
-    borderRadius: "8px",
-    cursor: "pointer",
-    fontWeight: "600",
-    fontSize: "0.9rem",
-  },
-  empty: { textAlign: "center", padding: "3rem", color: "#94a3b8" },
 };
 
 export default OrdresFabrication;
