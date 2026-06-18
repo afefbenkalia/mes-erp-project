@@ -30,6 +30,7 @@ from app.modules.production.model import (
     StatutProduction, StatutEtape, SEQUENCE_MACHINES,
 )
 from app.modules.orders.model import OF
+from app.modules.auth.model import User
 
 # ── Imports machine / maintenance ─────────────────────────────────────────────
 try:
@@ -60,6 +61,35 @@ _STATE_LABELS = {
 # ─────────────────────────────────────────────
 #  HELPERS INTERNES
 # ─────────────────────────────────────────────
+
+def _get_operator_names(db: Session) -> list[str]:
+    """Noms complets ('prenom nom') des opérateurs actifs (role='operator')."""
+    rows = (
+        db.query(User)
+        .filter(User.role == "operator", User.is_active == True)
+        .order_by(User.nom, User.prenom)
+        .all()
+    )
+    return [f"{u.prenom} {u.nom}" for u in rows]
+
+
+def _resolve_operator(db: Session, provided: str | None, ordre: int) -> str | None:
+    """
+    Garantit que l'opérateur enregistré provient bien de la table users (role=operator).
+
+    - Si `provided` correspond à un opérateur réel → on le garde tel quel.
+    - Sinon (vide, nom de simulation obsolète, etc.) → on assigne un opérateur réel
+      en round-robin selon l'ordre de l'étape.
+    - Si aucun opérateur n'existe en base → on retourne `provided` inchangé (fallback).
+    """
+    valid = _get_operator_names(db)
+    if not valid:
+        return provided
+    name = (provided or "").strip()
+    if name in valid:
+        return name
+    return valid[(ordre - 1) % len(valid)]
+
 
 def _code_pf(produit: str) -> str:
     p = produit.lower()
@@ -413,7 +443,9 @@ async def avancer_pipeline(
     # ── VALIDATION DE L'ÉTAPE ────────────────────────────────────────────────
     etape.qte_entree = data.qte_entree
     etape.qte_sortie = data.qte_sortie
-    etape.operateur  = data.operateur
+    # L'opérateur DOIT provenir de la table users (role=operator) — filet de
+    # sécurité serveur indépendant de l'état du frontend (cache, simulation…).
+    etape.operateur  = _resolve_operator(db, data.operateur, etape.ordre)
     etape.debut      = data.debut
     etape.fin        = data.fin
     etape.statut     = StatutEtape.TERMINE

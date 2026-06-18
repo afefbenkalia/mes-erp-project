@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.datetime_utc import utc_now_naive
 from app.core.security import get_current_user
 from app.database import get_db
+from app.modules.auth import service as auth_service
 from app.modules.auth.model import User
 from app.modules.dashboard.service import compute_machine_state_seconds
 from app.modules.maintenance.realtime import maintenance_ws_manager
@@ -67,7 +68,22 @@ async def _notify_maintenance_error(db: Session, machine, declared_by: str, comm
         "state": "ERREUR",
         "declared_by": declared_by,
         "comment": comment or "",
+        "target_role": "maintenance",
     }
+    # Persistance : la notification reste visible pour la maintenance même si
+    # aucun technicien n'était connecté au moment de la déclaration (suivi de l'incident).
+    # notif_id partagé entre la copie WS et la copie DB → déduplication côté front.
+    try:
+        created = auth_service.create_notification(
+            db,
+            type="machine_error",
+            title=payload["message"],
+            target_role="maintenance",
+            payload=payload,
+        )
+        payload["notif_id"] = created.id
+    except Exception:
+        logger.exception("Échec de la persistance de la notification ERREUR pour machine %s", machine.id)
     await maintenance_ws_manager.broadcast("notification", payload)
     await maintenance_ws_manager.broadcast(
         "machine_update",

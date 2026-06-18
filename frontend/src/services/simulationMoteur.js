@@ -213,18 +213,26 @@ export function minutesToHHMM(totalMinutes) {
  *
  * @returns {{ qte_entree, qte_sortie, operateur, debut, fin, _endMinutes, _rendement }}
  */
-export function simulateStep(machineCode, qteEntree, startMinutes, isLast, targetPF, stepIndex = 0) {
+export function simulateStep(machineCode, qteEntree, startMinutes, isLast, targetPF, stepIndex = 0, operatorsList = null) {
   const params = MACHINE_PARAMS[machineCode];
 
+  const pickOperator = (idx, startMins) => {
+    if (operatorsList && operatorsList.length > 0) {
+      return operatorsList[idx % operatorsList.length];
+    }
+    const heure  = Math.floor((startMins % 1440) / 60);
+    const equipe = getEquipeForHeure(heure);
+    return equipe.operateurs[idx % equipe.operateurs.length];
+  };
+
   if (!params) {
-    // Fallback générique
     const fallbackRendement = gaussianRand(0.970, 0.990);
     const qteSortie = isLast ? targetPF : Math.round(qteEntree * fallbackRendement * 100) / 100;
     const duree     = Math.round(10 + qteEntree * 0.08);
     return {
       qte_entree  : Math.round(qteEntree * 100) / 100,
       qte_sortie  : Math.round(qteSortie * 100) / 100,
-      operateur   : EQUIPES[0].operateurs[0],
+      operateur   : pickOperator(stepIndex, startMinutes),
       debut       : minutesToHHMM(startMinutes),
       fin         : minutesToHHMM(startMinutes + duree),
       _endMinutes : startMinutes + duree + 3,
@@ -242,7 +250,6 @@ export function simulateStep(machineCode, qteEntree, startMinutes, isLast, targe
   // ── 2. Quantité sortante ──────────────────────────────────────────────────
   let qteSortie;
   if (isLast) {
-    // Dernière étape : on force la sortie au PF cible (± 0.5 % de tolérance)
     const tolerance = targetPF * 0.005;
     qteSortie = targetPF + gaussianRand(-tolerance, tolerance);
   } else {
@@ -265,11 +272,8 @@ export function simulateStep(machineCode, qteEntree, startMinutes, isLast, targe
   const debutMinutes = startMinutes;
   const finMinutes   = startMinutes + dureeFinal;
 
-  // ── 5. Opérateur selon l'équipe active ────────────────────────────────────
-  const heureDebut   = Math.floor((debutMinutes % 1440) / 60);
-  const equipe       = getEquipeForHeure(heureDebut);
-  const operateurIdx = stepIndex % equipe.operateurs.length;
-  const operateur    = equipe.operateurs[operateurIdx];
+  // ── 5. Opérateur ──────────────────────────────────────────────────────────
+  const operateur = pickOperator(stepIndex, debutMinutes);
 
   return {
     qte_entree  : Math.round(qteEntree * 100) / 100,
@@ -296,7 +300,7 @@ export function simulateStep(machineCode, qteEntree, startMinutes, isLast, targe
  *
  * @returns {{ plan: Array, qteMP: number, rendementGlobal: number }}
  */
-export function precomputeProductionPlan(targetPF, startHour = 6, startMinute = 0) {
+export function precomputeProductionPlan(targetPF, startHour = 6, startMinute = 0, operatorsList = null) {
   const sequence = Object.keys(MACHINE_PARAMS);
 
   // Rendement global théorique = produit de tous les rendements moyens
@@ -315,7 +319,7 @@ export function precomputeProductionPlan(targetPF, startHour = 6, startMinute = 
 
   sequence.forEach((machineCode, index) => {
     const isLast = index === sequence.length - 1;
-    const step   = simulateStep(machineCode, currentQte, currentMinute, isLast, targetPF, index);
+    const step   = simulateStep(machineCode, currentQte, currentMinute, isLast, targetPF, index, operatorsList);
     plan.push({ machineCode, ...step });
     currentQte    = step.qte_sortie;
     currentMinute = step._endMinutes;

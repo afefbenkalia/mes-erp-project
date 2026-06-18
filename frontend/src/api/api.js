@@ -139,6 +139,7 @@ export const authAPI = {
   forgotPassword:        (email) => API.post("/auth/forgot-password", { email }),
   getNotifications:      ()      => API.get("/auth/notifications"),
   markNotificationsRead: ()      => API.post("/auth/notifications/read"),
+  getOperators:          ()      => API.get("/auth/operators"),
 };
 
 export default API;

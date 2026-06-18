@@ -35,6 +35,16 @@ def get_user_by_cin(db: Session, cin: str):
     return db.query(User).filter(User.cin == cin).first()
 
 
+def get_active_operators(db: Session):
+    """Return all active users with role 'operator'."""
+    return (
+        db.query(User)
+        .filter(User.role == "operator", User.is_active == True)
+        .order_by(User.nom, User.prenom)
+        .all()
+    )
+
+
 def create_user_by_admin(db: Session, user_data: UserCreateByAdmin) -> User:
     """
     Admin creates a new user with temporary password.
@@ -289,10 +299,31 @@ def create_notification(
     return notif
 
 
+# Variantes d'un même métier qui partagent la même file de notifications.
+# Un opérateur peut avoir le rôle "operator" ou "operateur" selon les comptes ;
+# une notification ciblant "operateur" doit donc être visible par les deux.
+_ROLE_ALIASES = {
+    "operator": ["operator", "operateur"],
+    "operateur": ["operator", "operateur"],
+    "maintenance": ["maintenance", "responsable_maintenance"],
+    "responsable_maintenance": ["maintenance", "responsable_maintenance"],
+}
+
+
+def target_roles_for(role: str) -> list:
+    """Renvoie l'ensemble des target_role qu'un utilisateur de ce rôle doit voir."""
+    if not role:
+        return []
+    return _ROLE_ALIASES.get(role.lower(), [role])
+
+
 def get_unread_notifications(db: Session, target_role: str) -> list:
+    roles = target_roles_for(target_role)
+    if not roles:
+        return []
     return (
         db.query(Notification)
-        .filter(Notification.target_role == target_role, Notification.is_read == False)  # noqa: E712
+        .filter(Notification.target_role.in_(roles), Notification.is_read == False)  # noqa: E712
         .order_by(Notification.created_at.desc())
         .limit(50)
         .all()
@@ -300,10 +331,13 @@ def get_unread_notifications(db: Session, target_role: str) -> list:
 
 
 def mark_all_notifications_read(db: Session, target_role: str) -> None:
+    roles = target_roles_for(target_role)
+    if not roles:
+        return
     db.query(Notification).filter(
-        Notification.target_role == target_role,
+        Notification.target_role.in_(roles),
         Notification.is_read == False,  # noqa: E712
-    ).update({"is_read": True})
+    ).update({"is_read": True}, synchronize_session=False)
     db.commit()
     logger.info(f"Notifications marked as read for role={target_role}")
 

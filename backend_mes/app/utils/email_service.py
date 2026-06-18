@@ -380,7 +380,7 @@ def send_maintenance_notification_email(
           "Veuillez prendre en charge cette intervention depuis le module Maintenance de la plateforme."
       )}
       {_divider()}
-      {_cta_button(f"{settings.FRONTEND_URL}/dashboard", "Ouvrir le tableau de bord", bg="#1a2c4e")}
+      {_cta_button(f"{settings.FRONTEND_URL}/dashboard?module=maintenance-dashboard", "Ouvrir le tableau de bord", bg="#1a2c4e")}
       {_divider()}
       {_body_text("Cet email est envoyé automatiquement à chaque changement d'état critique.", muted=True)}
     """

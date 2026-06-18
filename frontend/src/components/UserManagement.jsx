@@ -6,13 +6,13 @@ import {
   Clock3, BarChart3, CheckCircle, XCircle, AlertCircle,
   Loader, Mail, Calendar, Users, Activity, IdCard,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Globe
+  Globe, TriangleAlert
 } from "lucide-react";
 
 // ─── constants ─────────────────────────────────────────────
 const ROLES = {
   admin:       { label: "Administrateur", icon: Shield,  color: "#7c3aed", bg: "#ede9fe" },
-  manager:     { label: "Manager",        icon: UserCog, color: "#2563eb", bg: "#dbeafe" },
+  manager:     { label: "Responsable de production", icon: UserCog, color: "#2563eb", bg: "#dbeafe" },
   operator:    { label: "Opérateur",      icon: User,    color: "#059669", bg: "#d1fae5" },
   maintenance: { label: "Maintenance",    icon: Wrench,  color: "#d97706", bg: "#fef3c7" },
 };
@@ -238,6 +238,70 @@ const Field = ({ label, children }) => (
   </div>
 );
 
+// ─── ConfirmModal ───────────────────────────────────────────
+const ConfirmModal = ({ isOpen, onClose, onConfirm, loading, variant = "danger", title, message, confirmLabel, icon: Icon }) => {
+  if (!isOpen) return null;
+
+  const v = variant === "danger"
+    ? { accent: "#dc2626", accentBg: "#fff1f2", accentBorder: "#fecaca", accentLight: "#fef2f2", btnBg: "#dc2626", btnHover: "#b91c1c" }
+    : { accent: "#ca8a04", accentBg: "#fefce8", accentBorder: "#fde68a", accentLight: "#fffbeb", btnBg: "#d97706", btnHover: "#b45309" };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(15,23,42,.65)", backdropFilter: "blur(8px)" }} onClick={!loading ? onClose : undefined} />
+      <div style={{ position: "relative", width: "100%", maxWidth: 440, background: "#fff", borderRadius: 20, overflow: "hidden", border: "1px solid #e2e8f0", boxShadow: "0 32px 80px rgba(15,23,42,.28)", animation: "um-slide-in .22s cubic-bezier(.2,.8,.4,1) both" }}>
+
+        {/* Header */}
+        <div style={{ padding: "20px 24px 0", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: v.accentBg, border: `1.5px solid ${v.accentBorder}`, display: "grid", placeItems: "center" }}>
+            {Icon && <Icon size={22} style={{ color: v.accent }} />}
+          </div>
+          <button
+            onClick={onClose}
+            disabled={loading}
+            style={{ background: "#f8fafc", border: "1px solid #e2e8f0", width: 32, height: 32, borderRadius: 8, color: "#64748b", cursor: loading ? "not-allowed" : "pointer", display: "grid", placeItems: "center", opacity: loading ? .5 : 1 }}
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: "16px 24px 24px" }}>
+          <h3 style={{ margin: "14px 0 8px", fontSize: 17, fontWeight: 700, color: "#0f172a" }}>{title}</h3>
+          <p style={{ margin: "0 0 24px", fontSize: 13.5, color: "#64748b", lineHeight: 1.6 }}>{message}</p>
+
+          <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+            <button
+              onClick={onClose}
+              disabled={loading}
+              className="um-btn-ghost"
+              style={{ opacity: loading ? .5 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+            >
+              Annuler
+            </button>
+            <button
+              onClick={onConfirm}
+              disabled={loading}
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                padding: "9px 18px",
+                background: v.btnBg, color: "#fff",
+                border: "none", borderRadius: 10, cursor: loading ? "not-allowed" : "pointer",
+                fontSize: 13, fontWeight: 600,
+                opacity: loading ? .7 : 1,
+                transition: "all .14s",
+                boxShadow: "0 1px 3px rgba(0,0,0,.15)",
+              }}
+            >
+              {loading ? <Loader size={14} className="spin" /> : confirmLabel}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── UserModal ─────────────────────────────────────────────
 const UserModal = ({ isOpen, onClose, onSave, form, setForm, loading, mode = "create" }) => {
   if (!isOpen) return null;
@@ -295,7 +359,7 @@ const UserModal = ({ isOpen, onClose, onSave, form, setForm, loading, mode = "cr
               className="um-input"
             >
               <option value="admin">Administrateur</option>
-              <option value="manager">Manager</option>
+              <option value="manager">Responsable de production</option>
               <option value="operator">Opérateur</option>
               <option value="maintenance">Maintenance</option>
             </select>
@@ -381,6 +445,8 @@ const UserManagement = () => {
   const [stats, setStats]               = useState(defaultStats);
   const [currentPage, setCurrentPage]   = useState(1);
   const [itemsPerPage]                  = useState(10);
+  const [confirmDelete, setConfirmDelete]     = useState(null); // user object or null
+  const [confirmReset, setConfirmReset]       = useState(null); // user object or null
 
   const token       = localStorage.getItem("token");
   const currentUser = JSON.parse(localStorage.getItem("user") || "{}");
@@ -446,21 +512,25 @@ const UserManagement = () => {
     finally { setSaving(false); }
   };
 
-  const deleteUser = async (user) => {
-    if (!window.confirm(`Supprimer ${user.prenom} ${user.nom} ?`)) return;
-    try {
-      await API.delete(`/auth/users/${user.id}`, { headers: { Authorization: `Bearer ${token}` } });
-      showToast("Utilisateur supprimé.");
-      await Promise.all([fetchUsers(), fetchUsersStats()]);
-    } catch (e) { showToast(e.response?.data?.detail || "Erreur lors de la suppression.", "error"); }
-  };
-
-  const resetPassword = async (user) => {
-    if (!window.confirm(`Réinitialiser le mot de passe de ${user.prenom} ${user.nom} ?`)) return;
+  const deleteUser = async () => {
+    if (!confirmDelete) return;
     try {
       setSaving(true);
-      await API.post(`/auth/users/${user.id}/reset-password`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      await API.delete(`/auth/users/${confirmDelete.id}`, { headers: { Authorization: `Bearer ${token}` } });
+      showToast("Utilisateur supprimé.");
+      setConfirmDelete(null);
+      await Promise.all([fetchUsers(), fetchUsersStats()]);
+    } catch (e) { showToast(e.response?.data?.detail || "Erreur lors de la suppression.", "error"); }
+    finally { setSaving(false); }
+  };
+
+  const resetPassword = async () => {
+    if (!confirmReset) return;
+    try {
+      setSaving(true);
+      await API.post(`/auth/users/${confirmReset.id}/reset-password`, {}, { headers: { Authorization: `Bearer ${token}` } });
       showToast("Mot de passe temporaire régénéré et envoyé par email.");
+      setConfirmReset(null);
       await Promise.all([fetchUsers(), fetchUsersStats()]);
     } catch (e) { showToast(e.response?.data?.detail || "Erreur lors de la réinitialisation.", "error"); }
     finally { setSaving(false); }
@@ -515,6 +585,30 @@ const UserManagement = () => {
 
       <UserModal isOpen={showModal}     onClose={() => setShowModal(false)}                                                         onSave={createUser} form={form}     setForm={setForm}     loading={saving} />
       <UserModal isOpen={showEditModal} onClose={() => { setShowEditModal(false); setEditingUserId(null); }} onSave={updateUser} form={editForm} setForm={setEditForm} loading={saving} mode="edit" />
+
+      <ConfirmModal
+        isOpen={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirm={deleteUser}
+        loading={saving}
+        variant="danger"
+        icon={Trash2}
+        title="Supprimer l'utilisateur"
+        message={confirmDelete ? `Vous êtes sur le point de supprimer définitivement le compte de ${confirmDelete.prenom} ${confirmDelete.nom}. Cette action est irréversible.` : ""}
+        confirmLabel="Supprimer"
+      />
+
+      <ConfirmModal
+        isOpen={!!confirmReset}
+        onClose={() => setConfirmReset(null)}
+        onConfirm={resetPassword}
+        loading={saving}
+        variant="warning"
+        icon={KeyRound}
+        title="Réinitialiser le mot de passe"
+        message={confirmReset ? `Un nouveau mot de passe temporaire sera généré et envoyé par email à ${confirmReset.prenom} ${confirmReset.nom} (${confirmReset.email}). L'utilisateur devra le modifier à sa prochaine connexion.` : ""}
+        confirmLabel="Réinitialiser"
+      />
 
       {/* ── Page header ──────────────────────────────────── */}
       <header className="um-card" style={{ padding: "20px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -615,7 +709,7 @@ const UserManagement = () => {
         <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)} className="um-input" style={{ maxWidth: 200, flex: "0 1 200px" }}>
           <option value="all">Tous les rôles</option>
           <option value="admin">Administrateur</option>
-          <option value="manager">Manager</option>
+          <option value="manager">Responsable de production</option>
           <option value="operator">Opérateur</option>
           <option value="maintenance">Maintenance</option>
         </select>
@@ -720,10 +814,10 @@ const UserManagement = () => {
                           <button onClick={() => openEditModal(user)} className="um-act" style={{ background: "#eff6ff", color: "#2563eb", border: "1px solid #bfdbfe" }} title="Modifier">
                             <Pencil size={13} />
                           </button>
-                          <button onClick={() => resetPassword(user)} className="um-act" style={{ background: "#fefce8", color: "#ca8a04", border: "1px solid #fde68a" }} title="Réinitialiser mot de passe">
+                          <button onClick={() => setConfirmReset(user)} className="um-act" style={{ background: "#fefce8", color: "#ca8a04", border: "1px solid #fde68a" }} title="Réinitialiser mot de passe">
                             <KeyRound size={13} />
                           </button>
-                          <button onClick={() => deleteUser(user)} className="um-act" style={{ background: "#fff1f2", color: "#dc2626", border: "1px solid #fecaca" }} title="Supprimer">
+                          <button onClick={() => setConfirmDelete(user)} className="um-act" style={{ background: "#fff1f2", color: "#dc2626", border: "1px solid #fecaca" }} title="Supprimer">
                             <Trash2 size={13} />
                           </button>
                         </div>

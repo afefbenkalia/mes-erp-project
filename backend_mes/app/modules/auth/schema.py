@@ -80,6 +80,15 @@ class NotificationResponse(BaseModel):
         from_attributes = True
 
 
+class OperatorResponse(BaseModel):
+    id: int
+    nom: str
+    prenom: str
+
+    class Config:
+        from_attributes = True
+
+
 class RoleStat(BaseModel):
     role: str
     count: int

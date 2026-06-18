@@ -335,7 +335,12 @@ const Login = () => {
       if (res.data.force_change_password) {
         navigate("/change-password");
       } else {
-        navigate("/dashboard");
+        const params       = new URLSearchParams(window.location.search);
+        const redirectPath = params.get("redirect") || "";
+        const safeRedirect = redirectPath.startsWith("/") && !redirectPath.startsWith("//")
+          ? redirectPath
+          : "/dashboard";
+        navigate(safeRedirect);
       }
     } catch (err) {
       const status   = err.response?.status;

@@ -70,7 +70,7 @@ const MODULE_CONFIG = {
 
 const ROLE_LABELS = {
   admin:                   "Administrateur",
-  manager:                 "Manager",
+  manager:                 "Responsable de production",
   maintenance:             "Maintenance",
   operateur:               "Opérateur",
   operator:                "Opérateur",
@@ -86,10 +86,20 @@ const ROLE_COLORS = {
   operator:                { bg: "#f0fdf4", text: "#15803d", border: "#bbf7d0" },
 };
 
+/* Le backend stocke created_at en UTC naïf (sans fuseau). Sans suffixe "Z",
+   new Date() l'interpréterait comme une heure locale → décalage de plusieurs heures.
+   On force l'interprétation UTC quand aucun fuseau n'est présent. */
+const ensureUtcIso = (s) => {
+  if (!s || typeof s !== "string") return s;
+  return /[zZ]$|[+-]\d{2}:?\d{2}$/.test(s) ? s : `${s}Z`;
+};
+
 /* ── relative time formatter ── */
 const formatRelativeTime = (isoString) => {
   if (!isoString) return "";
-  const date = new Date(isoString);
+  // Les timestamps backend (created_at, payload.timestamp du « mot de passe oublié »)
+  // sont en UTC sans fuseau : on force l'interprétation UTC avant le calcul du delta.
+  const date = new Date(ensureUtcIso(isoString));
   if (Number.isNaN(date.getTime())) return "";
   const deltaSec = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
   if (deltaSec < 10)  return "À l'instant";
@@ -113,6 +123,23 @@ const EVENT_DOT_COLORS = {
 const getNotifDot = (payload) => {
   if (payload?.state) return EVENT_DOT_COLORS[payload.state] || "#3b82f6";
   return "#3b82f6";
+};
+
+/* Variantes d'un même métier qui partagent la même file de notifications. */
+const NOTIF_ROLE_GROUPS = [
+  ["operator", "operateur"],
+  ["maintenance", "responsable_maintenance"],
+];
+
+/* Une notification ciblée (target_role) n'est affichée qu'au rôle destinataire.
+   Évite les fuites : un opérateur ne voit pas les alertes ERREUR de la maintenance,
+   et la maintenance ne voit pas les notifications « machine réparée » des opérateurs. */
+const matchesNotifRole = (userRole, targetRole) => {
+  if (!targetRole) return false;
+  const u = (userRole || "").toLowerCase();
+  const t = targetRole.toLowerCase();
+  if (u === t) return true;
+  return NOTIF_ROLE_GROUPS.some((g) => g.includes(u) && g.includes(t));
 };
 
 const MAX_NOTIFS = 30;
@@ -351,6 +378,8 @@ export default function MESDashboard() {
   /* ── Search shortcut Ctrl/Cmd + K ── */
   useEffect(() => {
     const handleGlobalSearchShortcut = (e) => {
+      // Recherche de module désactivée pour le rôle ADMIN.
+      if (userRoleRef.current === "admin") return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         setSearchOpen(true);
@@ -368,28 +397,46 @@ export default function MESDashboard() {
       title,
       timestamp: payload?.timestamp || new Date().toISOString(),
       dot: getNotifDot(payload),
+      state: payload?.state || null,
+      machine_reference: payload?.machine_reference || null,
     };
     setNotifs((prev) => [entry, ...prev].slice(0, MAX_NOTIFS));
   }, []);
 
-  // Déduplication DB + WS : même demande ne s'affiche qu'une fois
+  // Déduplication DB + WS : une même notification ne s'affiche qu'une fois.
+  // notif_id (identifiant persistant) relie la copie WS et la copie rechargée
+  // depuis la base ; user_email+timestamp couvre les demandes de mot de passe oublié.
   const pushNotifDeduped = useCallback((title, payload) => {
-    if (payload?.user_email && payload?.timestamp) {
-      const key = `${payload.user_email}-${payload.timestamp}`;
+    let key = null;
+    if (payload?.notif_id != null) {
+      key = `db-${payload.notif_id}`;
+    } else if (payload?.user_email && payload?.timestamp) {
+      key = `${payload.user_email}-${payload.timestamp}`;
+    }
+    if (key) {
       if (seenNotifKeys.current.has(key)) return;
       seenNotifKeys.current.add(key);
     }
     pushNotif(title, payload);
   }, [pushNotif]);
 
-  // Chargement des notifications non lues depuis la DB (admin uniquement)
-  const loadDbNotifications = useCallback(async (role) => {
-    if (role !== "admin") return;
+  // Chargement des notifications non lues persistées en DB pour le rôle connecté.
+  // Garantit qu'une alerte (machine en ERREUR, machine réparée…) reste visible
+  // même si l'utilisateur n'était pas connecté au moment de l'événement.
+  const loadDbNotifications = useCallback(async () => {
     try {
       const res = await authAPI.getNotifications();
       const dbNotifs = res.data || [];
-      dbNotifs.forEach((n) => {
-        pushNotifDeduped(n.title, { ...(n.payload || {}), state: "RESET" });
+      // L'API renvoie les plus récentes d'abord ; on inverse pour que le plus
+      // récent finisse en tête de la pile après les pushNotif successifs.
+      [...dbNotifs].reverse().forEach((n) => {
+        const payload = n.payload || {};
+        pushNotifDeduped(n.title, {
+          ...payload,
+          notif_id: n.id,
+          state: payload.state || "RESET",
+          timestamp: payload.timestamp || ensureUtcIso(n.created_at),
+        });
       });
     } catch {
       // silencieux — ne bloque pas le dashboard
@@ -404,6 +451,7 @@ export default function MESDashboard() {
         const p    = message.payload || {};
         const role = userRoleRef.current;
 
+        // Demande de mot de passe oublié → administrateur uniquement.
         if (message.event === "forgot_password_request") {
           if (role === "admin") {
             pushNotifDeduped(
@@ -411,25 +459,30 @@ export default function MESDashboard() {
               { ...p, state: "RESET" },
             );
           }
-        } else if (role !== "admin") {
-          if (message.event === "notification") {
-            pushNotif(p.message || "Notification maintenance", p);
-          } else if (message.event === "intervention_completed") {
-            pushNotif(
-              `Intervention clôturée — ${p.machine_reference || "Machine"}`,
-              { ...p, state: "MARCHE" },
-            );
-          } else if (message.event === "machine_repaired") {
-            pushNotif(
-              p.message || `Machine ${p.machine_reference || ""} réparée`,
-              { ...p, state: "PAUSE" },
-            );
-          }
+          return;
+        }
+
+        // Toutes les autres notifications sont ciblées par rôle (target_role).
+        // Un opérateur ne reçoit que les siennes, la maintenance que les siennes.
+        if (!matchesNotifRole(role, p.target_role)) return;
+
+        if (message.event === "notification") {
+          pushNotifDeduped(p.message || "Notification maintenance", p);
+        } else if (message.event === "intervention_completed") {
+          pushNotifDeduped(
+            `Intervention clôturée — ${p.machine_reference || "Machine"}`,
+            { ...p, state: "MARCHE" },
+          );
+        } else if (message.event === "machine_repaired") {
+          pushNotifDeduped(
+            p.message || `Machine ${p.machine_reference || ""} réparée`,
+            { ...p, state: p.state || "PAUSE" },
+          );
         }
       },
     });
     return unsubscribe;
-  }, [pushNotif]);
+  }, [pushNotif, pushNotifDeduped]);
 
   useEffect(() => {
     const handler = (e) => {
@@ -441,13 +494,33 @@ export default function MESDashboard() {
 
   useEffect(() => {
     const stored = JSON.parse(localStorage.getItem("user"));
-    if (!stored) { window.location.href = "/login"; return; }
+    if (!stored) {
+      const redirectParam = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?redirect=${redirectParam}`;
+      return;
+    }
     setUser(stored);
     userRoleRef.current = stored.role;
     const key    = ROLE_TO_CONFIG_KEY[stored.role] || stored.role;
     const config = ROLE_CONFIG[key];
-    setActiveModule(config?.defaultModule || "dashboard");
-    loadDbNotifications(stored.role);
+    const urlParams      = new URLSearchParams(window.location.search);
+    const moduleParam    = urlParams.get("module");
+    const allowedModules = config?.modules || [];
+
+    // Si le lien email demande un module maintenance mais l'utilisateur connecté
+    // n'y a pas accès (mauvais compte), on force une reconnexion.
+    if (moduleParam && moduleParam.startsWith("maintenance-") && !allowedModules.includes(moduleParam)) {
+      localStorage.clear();
+      const redirectParam = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = `/login?redirect=${redirectParam}`;
+      return;
+    }
+
+    const initialModule  = (moduleParam && allowedModules.includes(moduleParam))
+      ? moduleParam
+      : (config?.defaultModule || "dashboard");
+    setActiveModule(initialModule);
+    loadDbNotifications();
   }, [loadDbNotifications]);
 
   if (!user) return null;
@@ -739,7 +812,6 @@ export default function MESDashboard() {
               <span style={{
                 fontSize: 16,
                 fontWeight: 700,
-                color: "#1e293b",
                 letterSpacing: "-0.3px",
                 background: "linear-gradient(135deg, #1e293b 0%, #2d3a4e 100%)",
                 backgroundClip: "text",
@@ -750,46 +822,48 @@ export default function MESDashboard() {
               </span>
             </div>
 
-            {/* Barre de recherche */}
-            <button
-              onClick={() => setSearchOpen(true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                padding: "0 14px",
-                height: 38,
-                borderRadius: 10,
-                background: "#f1f5f9",
-                border: "1.5px solid transparent",
-                cursor: "pointer",
-                transition: "all 0.15s",
-                minWidth: 280,
-              }}
-              onMouseEnter={e => {
-                e.currentTarget.style.background = "#f8fafc";
-                e.currentTarget.style.borderColor = "#e2e8f0";
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.background = "#f1f5f9";
-                e.currentTarget.style.borderColor = "transparent";
-              }}
-            >
-              <Search size={15} color="#94a3b8" />
-              <span style={{ flex: 1, textAlign: "left", color: "#94a3b8", fontSize: 13.5 }}>
-                Rechercher un module...
-              </span>
-              <kbd style={{
-                background: "#e2e8f0",
-                padding: "2px 6px",
-                borderRadius: 4,
-                fontSize: 11,
-                color: "#475569",
-                fontFamily: "monospace",
-              }}>
-                ⌘K
-              </kbd>
-            </button>
+            {/* Barre de recherche — masquée pour le rôle ADMIN */}
+            {role !== "admin" && (
+              <button
+                onClick={() => setSearchOpen(true)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "10px",
+                  padding: "0 14px",
+                  height: 38,
+                  borderRadius: 10,
+                  background: "#f1f5f9",
+                  border: "1.5px solid transparent",
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  minWidth: 280,
+                }}
+                onMouseEnter={e => {
+                  e.currentTarget.style.background = "#f8fafc";
+                  e.currentTarget.style.borderColor = "#e2e8f0";
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.background = "#f1f5f9";
+                  e.currentTarget.style.borderColor = "transparent";
+                }}
+              >
+                <Search size={15} color="#94a3b8" />
+                <span style={{ flex: 1, textAlign: "left", color: "#94a3b8", fontSize: 13.5 }}>
+                  Rechercher un module...
+                </span>
+                <kbd style={{
+                  background: "#e2e8f0",
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  color: "#475569",
+                  fontFamily: "monospace",
+                }}>
+                  ⌘K
+                </kbd>
+              </button>
+            )}
           </div>
 
           {/* SPACER */}
@@ -930,24 +1004,6 @@ export default function MESDashboard() {
                         </div>
                       </div>
                     ))
-                  )}
-
-                  {notifs.length > 0 && (
-                    <div style={{ padding: "11px 18px 14px", borderTop: "1px solid #f1f5f9" }}>
-                      <button
-                        style={{
-                          width: "100%", padding: "9px", borderRadius: 8,
-                          background: "#f8fafc", border: "1px solid #e2e8f0",
-                          cursor: "pointer", fontFamily: "inherit",
-                          fontSize: 13, fontWeight: 600, color: "#475569",
-                          transition: "background 0.12s",
-                        }}
-                        onMouseEnter={e => { e.currentTarget.style.background = "#f1f5f9"; }}
-                        onMouseLeave={e => { e.currentTarget.style.background = "#f8fafc"; }}
-                      >
-                        Voir toutes les notifications
-                      </button>
-                    </div>
                   )}
                 </div>
               )}

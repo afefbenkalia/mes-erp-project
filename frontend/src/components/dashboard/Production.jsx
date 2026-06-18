@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import axios from "axios";
+import { authAPI } from "../../api/api";
 import {
   MACHINE_PARAMS,
   EQUIPES,
@@ -631,6 +632,7 @@ const Production = ({ role = "operator" }) => {
   const [productions, setProductions] = useState([]);
   const [rebuts, setRebuts]           = useState([]);
   const [ofs, setOfs]                 = useState([]);
+  const [operators, setOperators]     = useState([]);
 
   const [selectedProdId, setSelectedProdId]   = useState(null);
   const [selectedProd, setSelectedProd]       = useState(null);
@@ -856,10 +858,13 @@ const Production = ({ role = "operator" }) => {
       setIsAutoRunning(true);
 
       if (!simulationPlanRef.current || simulationPlanRef.current._targetPF !== targetPF) {
-        const now    = new Date();
-        const startH = now.getHours();
-        const startM = now.getMinutes() < 30 ? 0 : 30;
-        const result = precomputeProductionPlan(targetPF, startH, startM);
+        const now           = new Date();
+        const startH        = now.getHours();
+        const startM        = now.getMinutes() < 30 ? 0 : 30;
+        const operatorsList = operators.length > 0
+          ? operators.map((op) => `${op.prenom} ${op.nom}`)
+          : null;
+        const result = precomputeProductionPlan(targetPF, startH, startM, operatorsList);
         simulationPlanRef.current = { ...result, _targetPF: targetPF };
         simStepIndexRef.current   = 0;
         setSimPlanMeta({ qteMP: result.qteMP, rendementGlobal: result.rendementGlobal });
@@ -895,6 +900,9 @@ const Production = ({ role = "operator" }) => {
               operateur: planStep.operateur,
             });
           } else {
+            const opList = operators.length > 0
+              ? operators.map((op) => `${op.prenom} ${op.nom}`)
+              : null;
             const fallback = simulateStep(
               currentEtape.machine,
               planStep?.qte_entree ?? targetPF * 1.05,
@@ -902,6 +910,7 @@ const Production = ({ role = "operator" }) => {
               isLastEtape,
               targetPF,
               stepIdx,
+              opList,
             );
             payload = {
               qte_entree : fallback.qte_entree,
@@ -1002,7 +1011,7 @@ const Production = ({ role = "operator" }) => {
         }, autoSpeed);
       }
     },
-    [autoSpeed, stopAutoMode, loadAll, loadPipeline, handleMachineBlockError, startMachinePoll, stopMachinePoll],
+    [autoSpeed, operators, stopAutoMode, loadAll, loadPipeline, handleMachineBlockError, startMachinePoll, stopMachinePoll],
   );
 
   // ═════════════════════════════════════════════════════════════════════════════
@@ -1011,6 +1020,17 @@ const Production = ({ role = "operator" }) => {
 
   useEffect(() => { loadAll(); loadOFs(); }, [loadAll, loadOFs]);
   useEffect(() => () => { stopAutoMode(); stopMachinePoll(); }, [stopAutoMode, stopMachinePoll]);
+
+  useEffect(() => {
+    authAPI.getOperators()
+      .then((res) => {
+        setOperators(res.data);
+        // Invalide un éventuel plan déjà calculé sans les opérateurs de la DB,
+        // pour qu'il soit recalculé avec les vrais opérateurs au prochain départ.
+        simulationPlanRef.current = null;
+      })
+      .catch(() => setOperators([]));
+  }, []);
 
   // ═════════════════════════════════════════════════════════════════════════════
   //  HANDLERS
@@ -1445,6 +1465,7 @@ const Production = ({ role = "operator" }) => {
                     targetPF={selectedProd.quantite_produit_fini}
                     machineBlocked={machineBlocked}
                     simulatedData={simulatedData}
+                    operators={operators}
                   />
                 ) : (
                   <div style={s.emptyState}>
@@ -1638,7 +1659,7 @@ const PipelineProgressBar = ({ etapes }) => {
 const EtapeActiveForm = ({
   etape, form, setForm, onSubmit, isSubmitting,
   nbEtapes, isAutoMode, targetPF, machineBlocked,
-  simulatedData,
+  simulatedData, operators,
 }) => {
   const isFirst = etape.ordre === 1;
   const isLast = etape.ordre === nbEtapes;
@@ -1750,8 +1771,12 @@ const EtapeActiveForm = ({
             onChange={(e) => setForm({ ...form, operateur: e.target.value })} 
             disabled={isDisabled}
           >
-            <option value="">{isAutoMode ? "Sélection automatique" : "Sélectionner"}</option>
-            {EQUIPES.flatMap((eq) => eq.operateurs.map((op) => <option key={op} value={op}>{op}</option>))}
+            <option value="">{isAutoMode ? "Sélection automatique" : "Sélectionner un opérateur"}</option>
+            {(operators || []).map((op) => (
+              <option key={op.id} value={`${op.prenom} ${op.nom}`}>
+                {op.prenom} {op.nom}
+              </option>
+            ))}
           </select>
         </div>
         

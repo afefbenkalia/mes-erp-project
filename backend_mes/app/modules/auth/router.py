@@ -179,6 +179,15 @@ def change_password(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to change password")
 
 
+@router.get("/operators", response_model=List[schema.OperatorResponse])
+def get_operators(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return all active operators (role='operator'). Accessible to any authenticated user."""
+    return service.get_active_operators(db)
+
+
 @router.get("/users", response_model=List[schema.UserResponse])
 def get_users(
     skip: int = Query(0, ge=0),

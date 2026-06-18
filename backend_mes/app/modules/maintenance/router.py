@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.datetime_utc import utc_now_naive
 from app.core.security import get_current_user
 from app.database import get_db
+from app.modules.auth import service as auth_service
 from app.modules.auth.model import User
 from app.utils.email_service import send_maintenance_notification_email
 
@@ -41,6 +42,19 @@ from .service import (
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
 logger = logging.getLogger(__name__)
+
+
+def _persist_notification(db: Session, type_: str, title: str, target_role: str, payload: dict) -> None:
+    """Sauvegarde la notification en base pour qu'elle survive aux reconnexions (suivi de l'incident).
+
+    Renseigne aussi ``payload['notif_id']`` afin que la copie diffusée en WebSocket et
+    la copie rechargée depuis la base partagent la même clé (déduplication côté front).
+    """
+    try:
+        notif = auth_service.create_notification(db, type=type_, title=title, target_role=target_role, payload=payload)
+        payload["notif_id"] = notif.id
+    except Exception:
+        logger.exception("Échec de la persistance de la notification %s (%s)", type_, target_role)
 
 
 async def _email_operator_users(db: Session, payload: dict) -> None:
@@ -87,7 +101,9 @@ async def _broadcast_preventive_due_events(db: Session, events: list[dict]) -> N
             "preventive_id": event["preventive_id"],
             "trigger_mode": event["trigger_mode"],
             "intervention_created": event["intervention_created"],
+            "target_role": "maintenance",
         }
+        _persist_notification(db, "preventive_due", notification_payload["message"], "maintenance", notification_payload)
         await maintenance_ws_manager.broadcast("notification", notification_payload)
         await _email_maintenance_users(db, notification_payload)
         await maintenance_ws_manager.broadcast(
@@ -163,8 +179,11 @@ async def simulate_error(machine_id: int, db: Session = Depends(get_db)):
             "message": f"Machine {machine.reference} en ERREUR",
             "machine_id": machine.id,
             "machine_reference": machine.reference,
+            "machine_name": machine.name,
             "state": status.state,
+            "target_role": "maintenance",
         }
+        _persist_notification(db, "machine_error", payload["message"], "maintenance", payload)
         await maintenance_ws_manager.broadcast("notification", payload)
         await _email_maintenance_users(db, payload)
     await maintenance_ws_manager.broadcast(
@@ -257,6 +276,7 @@ async def take_over(
         {
             "message": f"Machine {machine.reference} prise en charge par {data.technician}",
             "machine_id": machine.id,
+            "target_role": "maintenance",
         },
     )
     return InterventionResponse.model_validate(intervention)
@@ -289,6 +309,7 @@ async def mark_repaired(
         "technician": history.technician,
         "date": str(history.date),
         "state": status.state,  # PAUSE
+        "target_role": "maintenance",
     }
 
     await maintenance_ws_manager.broadcast("intervention_completed", repair_payload)
@@ -302,7 +323,7 @@ async def mark_repaired(
             "last_update": str(status.last_update),
         },
     )
-    # Notifier les opérateurs que la machine est réparée et en PAUSE
+    # Notifier UNIQUEMENT les opérateurs que la machine est réparée et en PAUSE
     operator_payload = {
         "message": f"Machine {machine.reference} réparée — en PAUSE, prête à relancer",
         "machine_id": machine.id,
@@ -311,7 +332,9 @@ async def mark_repaired(
         "state": status.state,
         "technician": data.technician,
         "action_effectuee": data.action_effectuee,
+        "target_role": "operateur",
     }
+    _persist_notification(db, "machine_repaired", operator_payload["message"], "operateur", operator_payload)
     await maintenance_ws_manager.broadcast("machine_repaired", operator_payload)
     try:
         await _email_operator_users(db, operator_payload)
